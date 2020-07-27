@@ -110,7 +110,7 @@ CALL CloseDataFile()
 IF (.NOT.STRICMP(NodeType_State,NodeType)) THEN
   CALL CollectiveStop(__STAMP__,'ERROR - Node type of statefile not equal to node type FLEXI is compiled with')
 END IF
-
+postiMode=.TRUE.
 CALL InitInterpolation(N_State)
 CALL InitMesh(meshMode=1,MeshFile_IN=MeshFile_state)
 CALL ReadIJKSorting()

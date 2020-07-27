@@ -110,6 +110,11 @@ USE MOD_Mortar        ,ONLY: InitMortar,FinalizeMortar
 USE MOD_EOS           ,ONLY: DefineParametersEos
 USE MOD_Equation      ,ONLY: DefineParametersEquation,InitEquation,FinalizeEquation
 USE MOD_Exactfunc     ,ONLY: DefineParametersExactFunc
+USE MOD_TimeDisc,          ONLY:DefineParametersTimedisc,InitTimeDisc,TimeDisc
+USE MOD_Analyze,           ONLY:DefineParametersAnalyze,InitAnalyze
+USE MOD_RecordPoints,      ONLY:DefineParametersRecordPoints,InitRecordPoints
+USE MOD_Output,            ONLY:DefineParametersOutput,InitOutput
+USE MOD_Testcase,          ONLY:DefineParametersTestcase
 #if PARABOLIC
 USE MOD_Lifting       ,ONLY: DefineParametersLifting,InitLifting,FinalizeLifting
 #endif
@@ -133,6 +138,7 @@ CALL FinalizeFV()
 #endif
 CALL FinalizeMortar()
 CALL FinalizeRestart()
+
 #if USE_MPI
 IF (changedMeshFile.OR.changedWithDGOperator) THEN
   CALL FinalizeMPI()
@@ -166,6 +172,7 @@ CALL DefineParametersExactFunc()
 #if PARABOLIC
 CALL DefineParametersLifting()
 #endif
+CALL DefineParametersTestCase()
 CALL prms%read_options(prmfile)
 
 ! Initialization of I/O routines

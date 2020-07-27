@@ -337,6 +337,7 @@ ELSE
   DepVolumeOnly  = 0
 END IF
 
+
 ! build distribution of FV and DG elements, which is stored in FV_Elems_loc
 IF (changedStateFile.OR.changedMeshFile.OR.changedDGonly) THEN
   CALL Build_FV_DG_distribution(statefile)
@@ -388,6 +389,7 @@ USE MOD_Posti_Mappings      ,ONLY: Build_mapBCSides
 USE MOD_Visu_Avg2D          ,ONLY: Average2D,WriteAverageToHDF5
 USE MOD_Interpolation_Vars  ,ONLY: NodeType,NodeTypeVISUFVEqui
 USE MOD_IO_HDF5             ,ONLY: InitMPIInfo
+USE MOD_TESTCASE_VARS     , ONLY: FileName
 IMPLICIT NONE
 ! INPUT / OUTPUT VARIABLES
 INTEGER,INTENT(IN)               :: mpi_comm_IN
@@ -478,7 +480,6 @@ LOGICAL                          :: changedPrmFile
 !   8. write VTK arrays       (always!)
 !
 !**********************************************************************************************
-
 CALL SetStackSizeUnlimited()
 postiMode = .TRUE. ! Flag used in FLEXI routines to do things only for POSTI usage
 CALL InitMPI(mpi_comm_IN)

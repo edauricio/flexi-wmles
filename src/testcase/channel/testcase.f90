@@ -301,6 +301,7 @@ SUBROUTINE WriteStats()
 USE MOD_PreProc
 USE MOD_Globals
 USE MOD_Output,       ONLY:OutputToFile
+USE MOD_TestCase_Vars,ONLY:FileName
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT/OUTPUT VARIABLES
@@ -343,8 +344,10 @@ SUBROUTINE FinalizeTestcase()
 USE MOD_Globals
 IMPLICIT NONE
 !==================================================================================================================================
-IF(MPIRoot) CALL WriteStats()
-IF(MPIRoot) DEALLOCATE(writeBuf)
+IF (.NOT.postiMode) THEN
+  IF(MPIRoot) CALL WriteStats()
+  IF(MPIRoot) DEALLOCATE(writeBuf)
+END IF
 END SUBROUTINE
 
 
