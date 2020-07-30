@@ -105,6 +105,8 @@ OPTION(FLEXI_MPI "Compile SINGLE or MPI version" ON)
 OPTION(FLEXI_PARABOLIC "Enable parabolic terms of equation-system" ON)
 CMAKE_DEPENDENT_OPTION(FLEXI_EDDYVISCOSITY "Enable eddy viscosity modells" OFF
                                            "FLEXI_PARABOLIC" OFF)
+CMAKE_DEPENDENT_OPTION(FLEXI_WMLES "Enable Wall Modeled LES" ON
+					"FLEXI_PARABOLIC" ON)
 OPTION(FLEXI_MKL "Use MKL libraries instead of BLAS/LAPACK" OFF)
 OPTION(FLEXI_PAPI "Use PAPI library to perform performance measurements (e.g. flop counts)." OFF)
 OPTION(FLEXI_FV "Enable Finite Volume subcell shock capturing" OFF)
@@ -214,6 +216,12 @@ IF (FLEXI_EDDYVISCOSITY)
   ADD_DEFINITIONS(-DEDDYVISCOSITY=1)
 ELSE()
   ADD_DEFINITIONS(-DEDDYVISCOSITY=0)
+ENDIF()
+
+IF(FLEXI_WMLES)
+	ADD_DEFINITIONS(-DWMLES=1)
+ELSE()
+	ADD_DEFINITIONS(-DWMLES=0)
 ENDIF()
 
 # =========================================================================
@@ -567,6 +575,11 @@ IF (FLEXI_EDDYVISCOSITY)
             eddyviscF90 ./src/equations/${FLEXI_EQNSYSNAME}/eddyVisc/smagorinsky/*.f90
             eddyviscF90 ./src/equations/${FLEXI_EQNSYSNAME}/eddyVisc/sigmaModel/*.f90)
   LIST(APPEND eqnsysF90 ${eddyviscF90})
+ENDIF()
+# append F90 files of the wall modeles LES approach to 'eqnsysF90' list
+IF (FLEXI_WMLES)
+	FILE(GLOB wmlesF90 ./src/equations/${FLEXI_EQNSYSNAME}/wmles/*.f90
+	LIST(APPEND eqnsysF90 ${wmlesF90})
 ENDIF()
 # append 'eqnsysF90'-list to 'flexiF90'-list
 LIST(APPEND flexiF90 ${eqnsysF90})
