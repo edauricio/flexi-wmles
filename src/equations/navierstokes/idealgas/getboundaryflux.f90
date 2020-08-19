@@ -308,14 +308,14 @@ CASE(22) ! exact BC = Dirichlet BC !!
   END DO; END DO
 
 
-CASE(3,4,9,91,23,24,25,27)
+CASE(3,4,5,9,91,23,24,25,27)
   ! Initialize boundary state with rotated inner state
   DO q=0,ZDIM(Nloc); DO p=0,Nloc
     ! transform state into normal system
     UPrim_boundary(1,p,q)= UPrim_master(1,p,q)
-    UPrim_boundary(2,p,q)= SUM(UPrim_master(2:4,p,q)*NormVec( :,p,q))
-    UPrim_boundary(3,p,q)= SUM(UPrim_master(2:4,p,q)*TangVec1(:,p,q))
-    UPrim_boundary(4,p,q)= SUM(UPrim_master(2:4,p,q)*TangVec2(:,p,q))
+    UPrim_boundary(2,p,q)= SUM(UPrim_master(2:4,p,q)*NormVec( :,p,q)) ! V- \cdot n
+    UPrim_boundary(3,p,q)= SUM(UPrim_master(2:4,p,q)*TangVec1(:,p,q)) ! V- \cdot t1
+    UPrim_boundary(4,p,q)= SUM(UPrim_master(2:4,p,q)*TangVec2(:,p,q)) ! V- \cdot t2
     UPrim_boundary(5:PP_nVarPrim,p,q)= UPrim_master(5:PP_nVarPrim,p,q)
   END DO; END DO !p,q
 
@@ -344,8 +344,13 @@ CASE(3,4,9,91,23,24,25,27)
       ! set density via ideal gas equation, consistent to pressure and temperature
       UPrim_boundary(1,p,q) = UPrim_boundary(5,p,q) / (UPrim_boundary(6,p,q) * R)
     END DO; END DO ! q,p
-  CASE(9,91) ! Euler (slip) wall
-    ! vel=(0,v_in,w_in)
+  CASE(9,91) ! Euler (slip) wall -- Also consistent with WMLES implementation,
+    ! that is, where a slip wall exists. Note that the UPrim_boundary state set here
+    ! is actually the final total "flux" q^\star - q-. (Check  Lifting_GetBoundaryFlux)
+    ! In other words, it is the same as setting the UPrim_boundary as case A1 of Mengaldo et al.'s paper
+    ! and then calculating the flux as the average mean between UPrim_master and UPrim_boundary
+
+    ! vel=(0,v_in,w_in) --- in our current system, the first component is the normal one.
     ! NOTE: from this state ONLY the velocities should actually be used for the diffusive flux
     DO q=0,ZDIM(Nloc); DO p=0,Nloc
       ! Set pressure by solving local Riemann problem
@@ -357,6 +362,27 @@ CASE(3,4,9,91,23,24,25,27)
       ! set temperature via ideal gas equation, consistent to density and pressure
       UPrim_boundary(6,p,q) = UPrim_boundary(5,p,q) / (UPrim_boundary(1,p,q) * R)
     END DO; END DO ! q,p
+
+#ifdef WMLES
+  CASE(5) ! WMLES implementation -- same as Euler/slip wall above,
+    ! that is, where a slip wall exists. Note that the UPrim_boundary state set here
+    ! is actually the final "flux" q^\star. (Check  Lifting_GetBoundaryFlux)
+    ! In other words, it is the same as setting the UPrim_boundary as case A1 of Mengaldo et al.'s paper
+    ! and then calculating the flux as the average mean between UPrim_master and UPrim_boundary
+
+    ! vel=(0,v_in,w_in) --- in our current system, the first component is the normal one.
+    ! NOTE: from this state ONLY the velocities should actually be used for the diffusive flux
+    DO q=0,ZDIM(Nloc); DO p=0,Nloc
+      ! Set pressure by solving local Riemann problem
+      UPrim_boundary(5,p,q) = PRESSURE_RIEMANN(UPrim_boundary(:,p,q))
+      UPrim_boundary(2,p,q) = 0. ! slip in tangential directions
+      ! Referring to Toro: Riemann Solvers and Numerical Methods for Fluid Dynamics (Chapter 6.3.3 Boundary Conditions)
+      ! the density is chosen from the inside
+      UPrim_boundary(1,p,q) = UPrim_master(1,p,q) ! density from inside
+      ! set temperature via ideal gas equation, consistent to density and pressure
+      UPrim_boundary(6,p,q) = UPrim_boundary(5,p,q) / (UPrim_boundary(1,p,q) * R)
+    END DO; END DO ! q,p
+#endif
 
   ! Cases 21-29 are taken from NASA report "Inflow/Outflow Boundary Conditions with Application to FUN3D" Jan-Reneé Carlson
   ! and correspond to case BCs 2.1 - 2.9
@@ -507,6 +533,10 @@ USE MOD_Riemann      ,ONLY: Riemann
 #if EDDYVISCOSITY
 USE MOD_EddyVisc_Vars,ONLY: muSGS_master
 #endif
+#if WMLES
+USE MOD_WMLES        ,ONLY: EvalDiffFlux3D_WMLES
+USE MOD_WMLES_Vars   ,ONLY: WMLES_Tauw, WMLES_Side
+#endif
 USE MOD_Testcase     ,ONLY: GetBoundaryFluxTestcase
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT / OUTPUT VARIABLES
@@ -582,7 +612,7 @@ ELSE
     Flux = Flux + Fd_Face_loc
 #endif /*PARABOLIC*/
 
-  CASE(3,4,9,91) ! Walls
+  CASE(3,4,5,9,91) ! Walls
 #if EDDYVISCOSITY
     muSGS_master(:,:,:,SideID)=0.
 #endif
@@ -611,6 +641,54 @@ ELSE
         Gd_Face_loc(5,:,:)=0.
         Hd_Face_loc(5,:,:)=0.
       END IF
+
+#ifdef WMLES
+    CASE(5)
+      ! Euler flux evaluation
+      ! This is done through a Riemann solver on the boundary, by setting the ghost
+      ! state as the same of inner state, however with a "negated" normal velocity
+      ! As shown in Mengaldo et al., this is more robust than directly prescribing the 
+      ! Euler flux on the boundary from the known no-transpiration state.
+      ! TODO: Make this a "Riemann-Type" boundary, and incorporate it into the
+      ! previous case-select
+
+      ! Mengaldo et al. Weak-Riemann-A1 scheme
+      ! FIRST ATTEMPT
+      ! Set UPrim_Boundary = UPrim_Master and recalculate the velocity vector
+      ! (i.e. negated normal velocity)
+      UPrim_Boundary(:,:,:) = UPrim_master(:,:,:)
+      DO q=0,ZDIM(Nloc); DO p=0,Nloc
+        UPrim_Boundary(2,p,q) = UPrim_master(2,p,q) - 2.0*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(1,p,q)
+        UPrim_Boundary(3,p,q) = UPrim_master(3,p,q) - 2.0*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(2,p,q)
+        UPrim_Boundary(4,p,q) = UPrim_master(4,p,q) - 2.0*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(3,p,q)
+        CALL PrimToCons(UPrim_master(:,p,q), UCons_master(:,p,q))
+        CALL PrimToCons(UPrim_Boundary(:,p,q), UCons_Boundary(:,p,q))
+      END DO; END DO !p, q
+      
+
+
+      ! SECOND ATTEMPT (Directly calculating UCons_Boundary "as is" in Mengaldo's paper instead
+      ! of relying on PrimToCons)
+      ! (with reasonable dimensional momentum components..)
+      !DO q=0,ZDIM(Nloc); DO p=0,Nloc
+      !  UCons_Boundary(1,p,q) = UPrim_master(1,p,q)
+      !  UCons_Boundary(2,p,q) = UPrim_master(1,p,q)*(UPrim_master(2,p,q) - 2*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(1,p,q))
+      !  UCons_Boundary(3,p,q) = UPrim_master(1,p,q)*(UPrim_master(3,p,q) - 2*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(2,p,q))
+      !  UCons_Boundary(4,p,q) = UPrim_master(1,p,q)*(UPrim_master(4,p,q) - 2*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(3,p,q))
+      !  UCons_Boundary(5,p,q) = UCons_master(5,p,q)
+      !END DO; END DO !p, q
+
+      CALL Riemann(Nloc,Flux,UCons_master,UCons_boundary,UPrim_master,UPrim_boundary, &
+        NormVec,TangVec1,TangVec2,doBC=.TRUE.)
+
+
+      ! Diffusive (Viscous) flux evaluation
+      ! This is "straightforward", since we simply set it to the known, computed 
+      ! wall shear stress components.
+      IF (WMLES_Side(SideID) .EQ. 0) CALL Abort(__STAMP__, 'OOOppss, no WMLESSide')
+      CALL EvalDiffFlux3D_WMLES(Nloc, UPrim_master, WMLES_Tauw(:,:,:, WMLES_Side(SideID)), Fd_Face_loc, Gd_Face_loc, Hd_Face_loc)
+#endif /* WMLES */
+
     CASE(9)
       ! Euler/(full-)slip wall
       ! Version 1: set the normal derivatives to zero
@@ -913,6 +991,19 @@ ELSE
       Flux(2:4          ,p,q) = UPrim_boundary(2:4,p,q)
       Flux(5:PP_nVarPrim,p,q) = UPrim_master(5:PP_nVarPrim,p,q)
     END DO; END DO !p,q
+#if WMLES
+  CASE(5)
+    ! WMLES BC
+    ! This is the final "total flux", i.e. q^\star. If in strong form (e.g. BR2), then,
+    ! q- is subtracted from this q^\star on line 1013.
+    ! Solution from the inside with velocity normal component set to 0 (done in GetBoundaryState)
+    DO q=0,PP_NZ; DO p=0,PP_N
+      ! Compute Flux
+      Flux(1            ,p,q) = UPrim_master(1,p,q)
+      Flux(2:4          ,p,q) = UPrim_boundary(2:4,p,q)
+      Flux(5:PP_nVarPrim,p,q) = UPrim_master(5:PP_nVarPrim,p,q)
+    END DO; END DO !p,q
+#endif
   CASE(1) !Periodic already filled!
   CASE DEFAULT ! unknown BCType
     CALL abort(__STAMP__,&

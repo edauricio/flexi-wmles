@@ -824,6 +824,7 @@ DO iElem=1,nElems
   END DO ! LocSideID
 END DO ! iElem
 LOGWRITE(*,*)'============================= END SIDE CHECKER ==================='
+FLUSH(UNIT_logOut)
 END SUBROUTINE fillMeshInfo
 
 

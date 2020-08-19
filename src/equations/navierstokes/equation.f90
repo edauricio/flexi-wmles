@@ -59,6 +59,9 @@ USE MOD_SplitFlux  ,ONLY: DefineParametersSplitDG
 #if EDDYVISCOSITY
 USE MOD_EddyVisc,   ONLY: DefineParametersEddyVisc
 #endif
+#if WMLES
+USE MOD_WMLES,      ONLY:DefineParametersWMLES
+#endif /* WMLES */
 IMPLICIT NONE
 !==================================================================================================================================
 CALL prms%SetSection("Equation")
@@ -74,6 +77,9 @@ CALL DefineParametersSplitDG()
 #if EDDYVISCOSITY
 CALL DefineParametersEddyVisc()
 #endif /*EDDYVISCOSITY*/
+#if WMLES
+CALL DefineParametersWMLES()
+#endif /* WMLES */
 END SUBROUTINE DefineParametersEquation
 
 !==================================================================================================================================
@@ -98,6 +104,9 @@ USE MOD_EddyVisc          ,ONLY: InitEddyVisc
 #ifdef SPLIT_DG
 USE MOD_SplitFlux         ,ONLY: InitSplitDG
 #endif /*SPLIT_DG*/
+#if WMLES
+USE MOD_WMLES             ,ONLY: InitWMLES
+#endif
  IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT/OUTPUT VARIABLES
@@ -177,6 +186,9 @@ SWRITE(UNIT_StdOut,'(132("-"))')
 
 ! Initialize current testcase
 CALL InitTestcase()
+
+! Initialize WMLES
+CALL InitWMLES()
 
 END SUBROUTINE InitEquation
 

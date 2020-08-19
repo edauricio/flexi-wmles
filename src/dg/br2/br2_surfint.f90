@@ -128,7 +128,7 @@ END IF
 
 DO SideID=firstSideID,lastSideID
   IF(SideID .LE. nBCSides) THEN
-    IF (Boundarytype(BC(SideID),BC_TYPE).EQ.4.OR.Boundarytype(BC(SideID),BC_TYPE).EQ.3) THEN
+    IF (Boundarytype(BC(SideID),BC_TYPE).EQ.4.OR.Boundarytype(BC(SideID),BC_TYPE).EQ.3 .OR. Boundarytype(BC(SideID),BC_TYPE).EQ.5) THEN
       eta =etaBR2_wall
     ELSE
       eta = etaBR2

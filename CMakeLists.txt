@@ -219,9 +219,7 @@ ELSE()
 ENDIF()
 
 IF(FLEXI_WMLES)
-	ADD_DEFINITIONS(-DWMLES=1)
-ELSE()
-	ADD_DEFINITIONS(-DWMLES=0)
+	ADD_DEFINITIONS(-DWMLES)
 ENDIF()
 
 # =========================================================================
@@ -578,7 +576,7 @@ IF (FLEXI_EDDYVISCOSITY)
 ENDIF()
 # append F90 files of the wall modeles LES approach to 'eqnsysF90' list
 IF (FLEXI_WMLES)
-	FILE(GLOB wmlesF90 ./src/equations/${FLEXI_EQNSYSNAME}/wmles/*.f90
+	FILE(GLOB wmlesF90 ./src/equations/${FLEXI_EQNSYSNAME}/wmles/*.f90)
 	LIST(APPEND eqnsysF90 ${wmlesF90})
 ENDIF()
 # append 'eqnsysF90'-list to 'flexiF90'-list

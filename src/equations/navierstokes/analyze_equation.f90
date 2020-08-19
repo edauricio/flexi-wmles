@@ -113,7 +113,7 @@ doCalcTimeAverage   =GETLOGICAL('CalcTimeAverage'  ,'.FALSE.')
 ALLOCATE(isWall(nBCs))
 DO i=1,nBCs
   SELECT CASE(BoundaryType(i,BC_TYPE))
-  CASE(3,4,9)
+  CASE(3,4,5,9)
     isWall(i)=.TRUE.
   CASE DEFAULT
     isWall(i)=.FALSE.

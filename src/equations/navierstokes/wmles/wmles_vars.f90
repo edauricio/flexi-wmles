@@ -20,11 +20,39 @@ IMPLICIT NONE
 PUBLIC
 SAVE
 
+
+INTEGER, PARAMETER :: WMLES_SCHUMANN = 1
+INTEGER, PARAMETER :: WMLES_WERNERWANGLE = 2
+INTEGER, PARAMETER :: WMLES_EQTBLE = 3
+
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
-INTEGER :: WallModel
-REAL :: h_wm
+INTEGER                     :: WallModel ! Integer corresponding to the WallModel
+REAL                        :: h_wm
+REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
+                                                   ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
+                                                   ! Second and third indices: indices "i,j" of the BC face
+                                                   ! Fourth index: SideID
+REAL,ALLOCATABLE            :: Side_OffWallDist(:,:,:) ! Off-wall distance h_wm for each point of each WMLES Side
+                                                       ! First and second indices: "i,j" of face
+                                                       ! Third index: WMLESSideID
+INTEGER                     :: nWMLESSides ! Number of WMLES BC Sides                                                   
+INTEGER,ALLOCATABLE         :: WMLES_Side(:) ! Mapping between WMLES BC Side and Mesh BCSide.
+                                           ! Usage: WMLES_Side(SideID), SideID \in [1:nBCSides]
+                                           ! OUTPUT: [1:nWMLESSides]
+INTEGER,ALLOCATABLE         :: WMLES_SideInv(:) ! Inverse of WMLES_Side mapping, that is,
+                                                ! get SideID of BC from WMLESSideID
+INTEGER,ALLOCATABLE         :: SlaveToTSide(:), MasterToTSide(:) ! Mapping between WMLES wall side to the top side of element
+                                                    ! arranged in master/slave so that we known which to use for the info on the adjacent element,
+                                                    ! that is, UPrim_master/slave.
+INTEGER,ALLOCATABLE         :: SlaveToWMLESSide(:), MasterToWMLESSide(:)
+INTEGER                     :: nSlaveSides, nMasterSides ! number of slave and master (to this MPI proc) sides where info is to be exchanged
+#if USE_MPI
+INTEGER                     :: nLocalNbElem ! number of local neighbor elements
+INTEGER                     :: nMPINbElem ! number of neighbor elements in other MPI partitions
+#endif                                                    
+LOGICAL                     :: WMLESInitDone = .FALSE.
 
 !=================================================================================================================================
 

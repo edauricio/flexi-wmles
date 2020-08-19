@@ -277,6 +277,12 @@ USE MOD_EddyVisc_Vars       ,ONLY: ComputeEddyViscosity, muSGS, muSGS_master, mu
 USE MOD_ProlongToFace       ,ONLY: ProlongToFace
 USE MOD_TimeDisc_Vars       ,ONLY: CurrentStage
 #endif
+#if WMLES
+USE MOD_WMLES               ,ONLY: ComputeWallStress
+#if !EDDYVISCOSITY
+USE MOD_TimeDisc_Vars       ,ONLY: CurrentStage
+#endif
+#endif
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT/OUTPUT VARIABLES
@@ -523,6 +529,16 @@ CALL FillFlux(t,Flux_master,Flux_slave,U_master,U_slave,UPrim_master,UPrim_slave
 CALL StartSendMPIData(   Flux_slave, DataSizeSide, 1,nSides,MPIRequest_Flux( :,RECV),SendID=1)
                                                                               ! Send MINE  /   Flux_slave: master -> slave
 #endif /*USE_MPI*/
+
+#if WMLES
+ ! Before calling FillFlux for domain Boundary sides, the Wall Stress must be calculated.
+ ! This step must be done here for two reasons:
+ ! 1. Within FillFlux we only have Side information, whereas calculation of wall stresses need Volume information
+ ! 2. We attempt to calculate it just for the first RK stage, as is done for the SGS model
+IF (CurrentStage .EQ. 1) THEN
+  CALL ComputeWallStress() ! Populate wall stress tensor WMLES_Tauw
+END IF
+#endif /* WMLES */
 
 ! 10.3)
 CALL FillFlux(t,Flux_master,Flux_slave,U_master,U_slave,UPrim_master,UPrim_slave,doMPISides=.FALSE.)

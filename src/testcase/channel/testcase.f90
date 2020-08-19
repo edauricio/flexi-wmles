@@ -133,7 +133,7 @@ CALL CollectiveStop(__STAMP__, &
 nWriteStats  = GETINT('nWriteStats','100')
 nAnalyzeTestCase = GETINT( 'nAnalyzeTestCase','1000')
 uBulkScale=1.
-Re_tau       = 1/mu0
+Re_tau       = 1./mu0
 c1 = 2.4390244
 uBulk=c1 * ((Re_tau+c1)*LOG(Re_tau+c1) + 1.3064019*(Re_tau + 29.627395*EXP(-1./11.*Re_tau) + 0.66762137*(Re_tau+3)*EXP(-Re_tau/3.))) &
       - 97.4857927165

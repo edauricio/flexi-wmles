@@ -46,7 +46,6 @@ USE MOD_Eos,               ONLY:DefineParametersEos
 USE MOD_Exactfunc,         ONLY:DefineParametersExactFunc
 USE MOD_Mortar,            ONLY:InitMortar
 USE MOD_Equation,          ONLY:DefineParametersEquation,InitEquation
-USE MOD_WMLES,             ONLY:DefineParametersWMLES,InitWMLES
 USE MOD_Testcase,          ONLY:DefineParametersTestcase
 USE MOD_DG,                ONLY:InitDG
 #if PARABOLIC
@@ -123,10 +122,6 @@ CALL DefineParametersExactFunc()
 CALL DefineParametersTestcase()
 CALL DefineParametersFilter()
 CALL DefineParametersOverintegration()
-! Here within this bunch of "Define" stuff is where we should put
-! a DefineParametersWMLES for the parameters of our WMLES model
-! For example: Name of the model (Schumann, WW, etc)
-! eventually, the h_wm explicitly defined, and other parameters as needed.
 CALL DefineParametersIndicator()
 #if FV_ENABLED
 CALL DefineParametersFV()
