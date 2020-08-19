@@ -344,12 +344,7 @@ CASE(3,4,5,9,91,23,24,25,27)
       ! set density via ideal gas equation, consistent to pressure and temperature
       UPrim_boundary(1,p,q) = UPrim_boundary(5,p,q) / (UPrim_boundary(6,p,q) * R)
     END DO; END DO ! q,p
-  CASE(9,91) ! Euler (slip) wall -- Also consistent with WMLES implementation,
-    ! that is, where a slip wall exists. Note that the UPrim_boundary state set here
-    ! is actually the final total "flux" q^\star - q-. (Check  Lifting_GetBoundaryFlux)
-    ! In other words, it is the same as setting the UPrim_boundary as case A1 of Mengaldo et al.'s paper
-    ! and then calculating the flux as the average mean between UPrim_master and UPrim_boundary
-
+  CASE(9,91) ! Euler (slip) wall --
     ! vel=(0,v_in,w_in) --- in our current system, the first component is the normal one.
     ! NOTE: from this state ONLY the velocities should actually be used for the diffusive flux
     DO q=0,ZDIM(Nloc); DO p=0,Nloc
@@ -366,7 +361,7 @@ CASE(3,4,5,9,91,23,24,25,27)
 #ifdef WMLES
   CASE(5) ! WMLES implementation -- same as Euler/slip wall above,
     ! that is, where a slip wall exists. Note that the UPrim_boundary state set here
-    ! is actually the final "flux" q^\star. (Check  Lifting_GetBoundaryFlux)
+    ! is actually the final "flux" q^\star. (Check  (Lifting_)GetBoundaryFlux)
     ! In other words, it is the same as setting the UPrim_boundary as case A1 of Mengaldo et al.'s paper
     ! and then calculating the flux as the average mean between UPrim_master and UPrim_boundary
 
@@ -521,7 +516,7 @@ SUBROUTINE GetBoundaryFlux(SideID,t,Nloc,Flux,UPrim_master,                   &
                            NormVec,TangVec1,TangVec2,Face_xGP)
 ! MODULES
 USE MOD_PreProc
-USE MOD_Globals      ,ONLY: Abort
+USE MOD_Globals      ,ONLY: Abort, Logging, UNIT_logOut ! remove logging, UNIT_logOut
 USE MOD_Mesh_Vars    ,ONLY: BoundaryType,BC
 USE MOD_EOS          ,ONLY: PrimToCons,ConsToPrim
 USE MOD_ExactFunc    ,ONLY: ExactFunc
@@ -644,6 +639,8 @@ ELSE
 
 #ifdef WMLES
     CASE(5)
+      LOGWRITE(*,*) '============== WMLES BOUNDARY FLUX ==============='
+      LOGWRITE(*,*) 'nWMLESSide', WMLES_Side(SideID)
       ! Euler flux evaluation
       ! This is done through a Riemann solver on the boundary, by setting the ghost
       ! state as the same of inner state, however with a "negated" normal velocity
@@ -656,6 +653,8 @@ ELSE
       ! FIRST ATTEMPT
       ! Set UPrim_Boundary = UPrim_Master and recalculate the velocity vector
       ! (i.e. negated normal velocity)
+      LOGWRITE(*,*) '-------- UPrim ------------'
+      LOGWRITE(*,'(2(A4,2X),10(A15,2X))') 'p', 'q', 'UPrim_Mst(1)', 'UPrim_Mst(2)', 'UPrim_Mst(3)', 'UPrim_Mst(4)', 'UPrim_Mst(5)', 'UPrim_Bd(1)', 'UPrim_Bd(2)', 'UPrim_Bd(3)', 'UPrim_Bd(4)', 'UPrim_Bd(5)'
       UPrim_Boundary(:,:,:) = UPrim_master(:,:,:)
       DO q=0,ZDIM(Nloc); DO p=0,Nloc
         UPrim_Boundary(2,p,q) = UPrim_master(2,p,q) - 2.0*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(1,p,q)
@@ -663,8 +662,13 @@ ELSE
         UPrim_Boundary(4,p,q) = UPrim_master(4,p,q) - 2.0*(SUM(UPrim_master(2:4,p,q) * NormVec(:,p,q)))*NormVec(3,p,q)
         CALL PrimToCons(UPrim_master(:,p,q), UCons_master(:,p,q))
         CALL PrimToCons(UPrim_Boundary(:,p,q), UCons_Boundary(:,p,q))
+
+        LOGWRITE(*,'(2(I4,2X),10(E15.8,2X))') p, q, UPrim_Master(1,p,q), UPrim_Master(2,p,q), UPrim_Master(3,p,q), UPrim_Master(4,p,q), UPrim_Master(5,p,q),&
+                            UPrim_Boundary(1,p,q), UPrim_Boundary(2,p,q), UPrim_Boundary(3,p,q), UPrim_Boundary(4,p,q), UPrim_Boundary(5,p,q)
       END DO; END DO !p, q
+      LOGWRITE(*,'(2X)')
       
+
 
 
       ! SECOND ATTEMPT (Directly calculating UCons_Boundary "as is" in Mengaldo's paper instead
@@ -678,9 +682,15 @@ ELSE
       !  UCons_Boundary(5,p,q) = UCons_master(5,p,q)
       !END DO; END DO !p, q
 
-      CALL Riemann(Nloc,Flux,UCons_master,UCons_boundary,UPrim_master,UPrim_boundary, &
+      CALL Riemann(Nloc,Flux,UCons_master,UCons_Boundary,UPrim_master,UPrim_Boundary, &
         NormVec,TangVec1,TangVec2,doBC=.TRUE.)
 
+      LOGWRITE(*,*) '-------- RIEMANN FLUX (INVISCID) ------------'
+      LOGWRITE(*,'(2(A4,2X),5(A15,2X))') 'p', 'q', 'Flux(1)', 'Flux(2)', 'Flux(3)', 'Flux(4)', 'Flux(5)'
+      DO q=0,ZDIM(Nloc); DO p=0,Nloc
+        LOGWRITE(*,'(2(I4,2X),5(E15.8,2X))') p, q, Flux(1,p,q), Flux(2,p,q), Flux(3,p,q), Flux(4,p,q), Flux(5,p,q)
+      END DO; END DO ! p,q
+      LOGWRITE(*,'(X)')
 
       ! Diffusive (Viscous) flux evaluation
       ! This is "straightforward", since we simply set it to the known, computed 
@@ -873,6 +883,12 @@ ELSE
         NormVec(3,:,:)*Hd_Face_loc(iVar,:,:)
     END DO ! iVar
 #endif /*PARABOLIC*/
+    LOGWRITE(*,*) '-------- TOTAL FLUX ------------'
+    LOGWRITE(*,'(2(A4,2X),5(A15,2X))') 'p', 'q', 'Flux(1)', 'Flux(2)', 'Flux(3)', 'Flux(4)', 'Flux(5)'
+    DO q=0,ZDIM(Nloc); DO p=0,Nloc
+      LOGWRITE(*,'(2(I4,2X),5(E15.8,2X))') p, q, Flux(1,p,q), Flux(2,p,q), Flux(3,p,q), Flux(4,p,q), Flux(5,p,q)
+    END DO; END DO ! p,q
+    LOGWRITE(*,'(X)')
 
   CASE(1) !Periodic already filled!
   CASE DEFAULT ! unknown BCType

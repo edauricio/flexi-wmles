@@ -154,8 +154,6 @@ END DO ! SideID
 IF(.NOT.doMPISides)THEN
   DO SideID=1,nBCSides
     FVEM = FV_Elems_master(SideID)
-    ! Here, inside GetBoundaryFlux subroutine is where we set our WMLES viscous fluxes 
-    ! (i.e. wall shear-stress components)
     CALL GetBoundaryFlux(SideID,t,PP_N,&
        Flux_master(  :,:,:,     SideID),&
        UPrim_master( :,:,:,     SideID),&
