@@ -36,7 +36,7 @@ ELSE()
   ELSE()
     SET(FLEXI_DLPATH "https://github.com/flexi-framework")
   ENDIF()
-  SET (HDF5DOWNLOAD https://bitbucket.hdfgroup.org/scm/hdffv/hdf5.git )
+  SET (HDF5DOWNLOAD http://bitbucket.hdfgroup.org/scm/hdffv/hdf5.git )
 ENDIF()
 SET (HDF5TAG "hdf5-1_10_4" CACHE STRING "HDF5 version tag")
 

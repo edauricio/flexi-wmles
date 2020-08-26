@@ -373,7 +373,7 @@ END SUBROUTINE ComputeWallStress
 !==================================================================================================================================
 SUBROUTINE EvalDiffFlux3D_WMLES(Nloc, UPrim_master, Tauw, f, g, h)
 ! MODULES
-!USE MOD_WMLES_Vars
+USE MOD_Globals
 IMPLICIT NONE
 
 !----------------------------------------------------------------------------------------------------------------------------------
@@ -386,6 +386,10 @@ REAL,DIMENSION(PP_nVar    ,0:Nloc,0:ZDIM(Nloc)),INTENT(OUT) :: f,g,h
 INTEGER                                 :: p,q
 REAL                                    :: tau_xy, tau_yz
 !==================================================================================================================================
+
+LOGWRITE(*,*) '-------- DIFFUSIVE FLUX (VISCOUS) ------------'
+LOGWRITE(*,'(2(A4,2X),15(A15,2X))') 'p', 'q', 'f(1)', 'f(2)', 'f(3)', 'f(4)', 'f(5)',&
+            'g(1)', 'g(2)', 'g(3)', 'g(4)', 'g(5)', 'h(1)', 'h(2)', 'h(3)', 'h(4)', 'h(5)'
 
 DO q=0,ZDIM(Nloc); DO p=0,Nloc
 
@@ -411,7 +415,13 @@ DO q=0,ZDIM(Nloc); DO p=0,Nloc
   h(4,p,q) = 0. ! tau_zz = 0
   h(5,p,q) = -(UPrim_master(3,p,q)*tau_yz) ! -(u*tau_zx + v*tau_zy + w*tau_zz - kdTdx)
 
+
+  LOGWRITE(*,'(2(I4,2X),15(E15.8,2X))') p, q, f(1,p,q), f(2,p,q), f(3,p,q), f(4,p,q), f(5,p,q),&
+     g(1,p,q), g(2,p,q), g(3,p,q), g(4,p,q), g(5,p,q), h(1,p,q), h(2,p,q), h(3,p,q), h(4,p,q), h(5,p,q)
+
 END DO; END DO ! p,q
+
+LOGWRITE(*,'(X)')
 
 END SUBROUTINE EvalDiffFlux3D_WMLES
 
