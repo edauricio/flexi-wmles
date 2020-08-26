@@ -234,7 +234,7 @@ IF (nWMLESSides .NE. 0) THEN
   END DO
 END IF
 LOGWRITE(*,*) '========= END OF WMLES INFO =========='
-FLUSH(UNIT_logOut)
+IF (Logging) FLUSH(UNIT_logOut)
 
 
 ! ALLOCATE(nbElemID(nWMLESSides))
@@ -356,7 +356,7 @@ SELECT CASE(WallModel)
       END DO; END DO ! p,q
     END DO
     LOGWRITE(*,*) '================= End of Wall Stress Calc ==================='
-    FLUSH(UNIT_logOut)
+    IF (Logging) FLUSH(UNIT_logOut)
 
   CASE DEFAULT
     CALL abort(__STAMP__,&
