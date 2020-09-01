@@ -49,6 +49,7 @@ CALL addStrListEntry('WMLES', 'EquilibriumTBLE', WMLES_EQTBLE)
 
 CALL prms%CreateRealOption('h_wm', "Distance from the wall at which LES and Wall Model "// &
                                     "exchange instantaneous flow information", "0.2")
+CALL prms%CreateRealOption('delta', "Estimated Boundary Layer Thickness")
 
 END SUBROUTINE DefineParametersWMLES
 
@@ -74,10 +75,13 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
+REAL, PARAMETER                 :: WMLES_Tol=1.E-2
 INTEGER                         :: SideID, iSide
-INTEGER                         :: WElemID, TSideID, TSideFlip
+INTEGER                         :: WElemID, OppSideID, OppSideFlip, WLocSide
 INTEGER                         :: TotalNWMLESSides
-! temp
+REAL                            :: ElemHeight
+INTEGER                         :: hOnOppFace, nextElem, firstElem
+INTEGER                         :: i,p,q
 INTEGER, ALLOCATABLE            :: tmpMasterToTSide(:), tmpMasterToWMLES(:), tmpSlaveToTSide(:), tmpSlaveToWMLES(:)
 !==================================================================================================================================
 IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
@@ -101,6 +105,8 @@ IF (H_WM .LE. 0) &
     CALL CollectiveStop(__STAMP__,&
         'h_wm distance from the wall must be positive.')
 
+delta = GETREAL('delta')
+
 ! Count how many WMLES BC Sides we have defined,
 ! and populate the mappings:
 ! - Mesh SideID to WMLES SideID (For use in GetBoundaryFlux.f90 in conjunction with WMLES_Tauw)
@@ -112,7 +118,7 @@ IF (H_WM .LE. 0) &
 
 ! However, IF a mapping between side -> neighbor process rank is needed for further communication
 ! (e.g. when solving the TBL equations on the same mesh with p-refinement), it may be
-! accomplished by checking SideToElem(S2E_(NB_)ELEM_ID, TSideID) == -1 (i.e., the needed elem is not on this proc)
+! accomplished by checking SideToElem(S2E_(NB_)ELEM_ID, OppSideID) == -1 (i.e., the needed elem is not on this proc)
 
 ALLOCATE(WMLES_Side(1:nBCSides))
 ALLOCATE(tmpMasterToTSide(1:nBCSides))
@@ -135,23 +141,71 @@ DO SideID=1,nBCSides
         WMLES_Side(SideID) = nWMLESSides
 
         WElemID = SideToElem(S2E_ELEM_ID, SideID)
-        IF (ElemToSide(E2S_SIDE_ID, ETA_MINUS, WElemID) .EQ. SideID) THEN ! lower wall
-          TSideID = ElemToSide(E2S_SIDE_ID, ETA_PLUS, WElemID)
-          TSideFlip = ElemToSide(E2S_FLIP, ETA_PLUS, WElemID)
-        ELSE IF (ElemToSide(E2S_SIDE_ID, ETA_PLUS, WElemID) .EQ. SideID) THEN ! upper wall
-          TSideID = ElemToSide(E2S_SIDE_ID, ETA_MINUS, WElemID)
-          TSideFlip = ElemToSide(E2S_FLIP, ETA_MINUS, WElemID)
-        ELSE
-          CALL Abort(__STAMP__, 'Vertical walls?')
-        END IF
+        ! Get opposite side
+        WLocSide = SideToElem(S2E_LOC_SIDE_ID, SideID) ! Wall elements are always master (thus no NB_LOC check needed)
+        SELECT CASE(WLocSide)
+        CASE (ETA_MINUS) ! lower wall
+            OppSideID = ElemToSide(E2S_SIDE_ID, ETA_PLUS, WElemID)
+            OppSideFlip = ElemToSide(E2S_FLIP, ETA_PLUS, WElemID)
+        CASE (ETA_PLUS) ! upper wall
+            OppSideID = ElemToSide(E2S_SIDE_ID, ETA_MINUS, WElemID)
+            OppSideFlip = ElemToSide(E2S_FLIP, ETA_MINUS, WElemID)
+        CASE (XI_MINUS) ! left vertical wall
+            OppSideID = ElemToSide(E2S_SIDE_ID, XI_PLUS, WElemID)
+            OppSideFlip = ElemToSide(E2S_FLIP, XI_PLUS, WElemID)
+        CASE (XI_PLUS) ! right vertical wall
+            OppSideID = ElemToSide(E2S_SIDE_ID, XI_MINUS, WElemID)
+            OppSideFlip = ElemToSide(E2S_FLIP, XI_MINUS, WElemID)
+        CASE (ZETA_MINUS) ! back vertical wall
+            OppSideID = ElemToSide(E2S_SIDE_ID, ZETA_PLUS, WElemID)
+            OppSideFlip = ElemToSide(E2S_FLIP, ZETA_PLUS, WElemID)
+        CASE (ZETA_PLUS) ! front vertical wall
+            OppSideID = ElemToSide(E2S_SIDE_ID, ZETA_MINUS, WElemID)
+            OppSideFlip = ElemToSide(E2S_FLIP, ZETA_MINUS, WElemID)
+        END SELECT
 
-        IF (TSideFlip .EQ. 0) THEN ! WElem is master of Top side. Hence, we should use info from UPrim_slave (adjacent element)
+        ! Check if h_wm is within the first element adjacent to the wall
+        hOnOppFace = 0
+        nextElem = 0
+        firstElem = 0
+
+        DO q=0, PP_NZ; DO p=0, PP_N
+            ElemHeight = 0
+            DO i=1,3
+                ElemHeight = ElemHeight + (Face_xGP(i,p,q,0,OppSideID) - Face_xGP(i,p,q,0,SideID))**2
+            END DO
+            ElemHeight = SQRT(ElemHeight)
+            IF (ABS(ElemHeight - h_wm) .LE. WMLES_Tol) THEN
+                hOnOppFace = hOnOppFace + 1
+            ELSE IF ((ElemHeight - h_wm) .LT. 0) THEN
+                nextElem = nextElem + 1
+            ELSE IF ((ElemHeight - h_wm) .GE. 0) THEN
+                firstElem = firstElem + 1
+            END IF
+        END DO; END DO ! p, q
+        IF (hOnOppFace .GT. 0) THEN ! At least some points are on the opposite face
+            IF (hOnOppFace .EQ. (PP_NZ+1)*(PP_N+1)) THEN ! every point is on the opposite face
+                WRITE(*,*) "We take the opposite face's values!"
+                WRITE(*,*) "Elem, SideID, OppSideID, myRank"
+                WRITE(*,*) WElemID, SideID, OppSideID, myRank
+            ELSE IF (nextElem .GT. 0) THEN ! 
+
+            END IF
+        END IF
+        WRITE(*,*) "Elem, SideID, myRank"    
+        WRITE(*,*) WElemID, SideID, myRank
+
+        WRITE(*,*) hOnOppFace, nextElem, firstElem
+        CALL Abort(__STAMP__, ".")
+
+
+        IF (OppSideFlip .EQ. 0) THEN ! WElem is master of Top side. Hence, we should use info from UPrim_slave (adjacent element)
           nSlaveSides = nSlaveSides + 1
-          tmpSlaveToTSide(nSlaveSides) = TSideID
+          tmpSlaveToTSide(nSlaveSides) = OppSideID
           tmpSlaveToWMLES(nSlaveSides) = nWMLESSides
         ELSE
           nMasterSides = nMasterSides + 1
-          tmpMasterToTSide(nMasterSides) = TSideID
+          tmpMasterToTSide(nMasterSides) = OppSideID
           tmpMasterToWMLES(nMasterSides) = nWMLESSides
         END IF
     END IF
@@ -240,12 +294,12 @@ IF (Logging) FLUSH(UNIT_logOut)
 ! ALLOCATE(nbElemID(nWMLESSides))
 ! nLocalNbElem=nWMLESSides
 ! ! Count how many slave and master top sides there are (for looping purposes)
-! ! and populate the mapping between WMLESSideID to TSideID
+! ! and populate the mapping between WMLESSideID to OppSideID
 ! DO iWSide=1,nWMLESSides
 !   WSideID = WMLES_SideInv(iWSide)
 !   WElemID = SideToElem(S2E_ELEM_ID, WSideID)
 !   TSideID = ElemToSide(E2S_SIDE_ID, ETA_PLUS, WElemID)
-!   TSideFlip = ElemToSide(E2S_FLIP, ETA_PLUS, WElemID)
+!   OppSideFlip = ElemToSide(E2S_FLIP, ETA_PLUS, WElemID)
 
 !   ! Get ID of neighbor element of the wall adjacent element
 !   ! If TSideFlip == 0, WElem is the root of the face, so S2E_NB_ELEM_ID gives the adjacent element

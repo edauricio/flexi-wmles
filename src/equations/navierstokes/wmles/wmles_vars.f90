@@ -30,6 +30,7 @@ INTEGER, PARAMETER :: WMLES_EQTBLE = 3
 !----------------------------------------------------------------------------------------------------------------------------------
 INTEGER                     :: WallModel ! Integer corresponding to the WallModel
 REAL                        :: h_wm
+REAL                        :: delta
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
                                                    ! Second and third indices: indices "i,j" of the BC face
