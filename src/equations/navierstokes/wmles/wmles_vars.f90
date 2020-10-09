@@ -49,12 +49,29 @@ INTEGER,ALLOCATABLE         :: SlaveToTSide(:), MasterToTSide(:) ! Mapping betwe
                                                     ! that is, UPrim_master/slave.
 INTEGER,ALLOCATABLE         :: SlaveToWMLESSide(:), MasterToWMLESSide(:)
 INTEGER                     :: nSlaveSides, nMasterSides ! number of slave and master (to this MPI proc) sides where info is to be exchanged
-#if USE_MPI
-INTEGER                     :: nLocalNbElem ! number of local neighbor elements
-INTEGER                     :: nMPINbElem ! number of neighbor elements in other MPI partitions
-#endif                                                    
 LOGICAL                     :: WMLESInitDone = .FALSE.
 
+#if USE_MPI
+!----------------------------------------------------------------------------------------------------------------------------------
+! MPI VARIABLES
+!----------------------------------------------------------------------------------------------------------------------------------
+INTEGER                     :: nLocalNbElem ! number of local neighbor elements
+INTEGER                     :: nMPINbElem ! number of neighbor elements in other MPI partitions
+! Vars above are old.. delete?
+
+INTEGER, ALLOCATABLE        :: ProcToRecvWMLES_Tau(:) ! List of MPI Procs to Receive WMLES_Tau info so that it can be implemented
+                                                      ! in OUR WMLES_Side.
+
+REAL, ALLOCATABLE           :: TauW_NormVec_MINE(:,:)
+REAL, ALLOCATABLE           :: TauW_FacexGP_MINE(:,:)
+INTEGER, ALLOCATABLE        :: TauW_Element_MINE(:)
+INTEGER, ALLOCATABLE        :: TauW_CalcInfo_MINE(:,:) ! Information on the point h_wm that is my responsibility to calculate
+                                                       ! Indices -- 1: Interpolate (0), Side point(1) or Element point(2)
+                                                       !            2:4: i,j,k of face or element points (k=0 for face)
+                                                       !            5: Side or Element ID
+
+
 !=================================================================================================================================
+#endif                                                    
 
 END MODULE MOD_WMLES_Vars

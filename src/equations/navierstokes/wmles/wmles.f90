@@ -22,6 +22,10 @@
 MODULE MOD_WMLES
 !----------------------------------------------------------------------------------------------------------------------------------
 ! MODULES
+#if USE_MPI
+USE MPI 
+#endif
+
 IMPLICIT NONE
 PRIVATE
 
@@ -75,14 +79,28 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
-REAL, PARAMETER                 :: WMLES_Tol=1.E-2
-INTEGER                         :: SideID, iSide
-INTEGER                         :: WElemID, OppSideID, OppSideFlip, WLocSide
+REAL                            :: WMLES_Tol
+INTEGER                         :: SideID, WSideID, iSide
+INTEGER                         :: hwmElemID, OppSideID, OppSideFlip, WLocSide
 INTEGER                         :: TotalNWMLESSides
-REAL                            :: ElemHeight
+REAL                            :: ElemHeight, DiffVect(1:3), DistanceFromPoint
 INTEGER                         :: hOnOppFace, nextElem, firstElem
-INTEGER                         :: i,p,q
+INTEGER                         :: i,j,k,p,q,r
 INTEGER, ALLOCATABLE            :: tmpMasterToTSide(:), tmpMasterToWMLES(:), tmpSlaveToTSide(:), tmpSlaveToWMLES(:)
+INTEGER                         :: nTauW_MINE, LocSide
+REAL, ALLOCATABLE               :: tmpTauW_NormVec_MINE(:,:), tmpTauW_FacexGP_MINE(:,:)
+INTEGER, ALLOCATABLE            :: tmpTauW_Element_MINE(:)
+REAL                            :: h_wm_Coords(3), DistanceVect(3), InwardNorm(3), Distance
+REAL                            :: abs_h_wm
+LOGICAL                         :: Found
+
+#if USE_MPI
+REAL, ALLOCATABLE               :: dataToSend(:,:), dataToRecv(:)
+INTEGER, ALLOCATABLE            :: commCntSend(:), commCntRcvd(:), commRequests(:), maxCommRecv(:)
+INTEGER                         :: iErr, iStat(MPI_STATUS_SIZE), sendCnt
+INTEGER                         :: iNbProc
+LOGICAL                         :: WaitComm(nNbProcs), FoundOrNomB
+#endif
 !==================================================================================================================================
 IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
   CALL CollectiveStop(__STAMP__,&
@@ -121,6 +139,7 @@ delta = GETREAL('delta')
 ! accomplished by checking SideToElem(S2E_(NB_)ELEM_ID, OppSideID) == -1 (i.e., the needed elem is not on this proc)
 
 ALLOCATE(WMLES_Side(1:nBCSides))
+
 ALLOCATE(tmpMasterToTSide(1:nBCSides))
 ALLOCATE(tmpSlaveToTSide(1:nBCSides))
 ALLOCATE(tmpMasterToWMLES(1:nBCSides))
@@ -134,82 +153,274 @@ tmpSlaveToWMLES = 0
 nWMLESSides = 0
 nSlaveSides = 0
 nMasterSides = 0
+!---
+ALLOCATE(tmpTauW_NormVec_MINE(1:3,(PP_N+1)*(PP_NZ+1)*nSides))
+ALLOCATE(tmpTauW_FacexGP_MINE(1:3,(PP_N+1)*(PP_NZ+1)*nSides))
+ALLOCATE(tmpTauW_Element_MINE((PP_N+1)*(PP_NZ+1)*nSides))
 
-DO SideID=1,nBCSides
-    IF (BoundaryType(BC(SideID),BC_TYPE) .EQ. 5) THEN ! WMLES side
+tmpTauW_NormVec_MINE = 0
+tmpTauW_FacexGP_MINE = 0
+tmpTauW_Element_MINE = 0
+
+nTauW_MINE = 0
+!---
+! Create and set some temp MPI variables
+#if USE_MPI
+ALLOCATE(dataToSend(10,(PP_N+1)*(PP_NZ+1)*nMPISides))
+ALLOCATE(dataToRecv(10))
+ALLOCATE(commCntSend(nNbProcs))
+ALLOCATE(commCntRcvd(nNbProcs))
+ALLOCATE(commRequests(nNbProcs))
+ALLOCATE(maxCommRecv(nNbProcs))
+
+commCntSend = 0
+commCntRcvd = 0
+maxCommRecv = 0
+commRequests = MPI_REQUEST_NULL
+sendCnt = 0
+#endif
+
+LOGWRITE(*,*) "====================== WMLES Exchange Location Info ===================="
+DO WSideID=1,nBCSides
+    IF (BoundaryType(BC(WSideID),BC_TYPE) .EQ. 5) THEN ! WMLES side
         nWMLESSides = nWMLESSides + 1
-        WMLES_Side(SideID) = nWMLESSides
+        WMLES_Side(WSideID) = nWMLESSides
 
-        WElemID = SideToElem(S2E_ELEM_ID, SideID)
-        ! Get opposite side
-        WLocSide = SideToElem(S2E_LOC_SIDE_ID, SideID) ! Wall elements are always master (thus no NB_LOC check needed)
-        SELECT CASE(WLocSide)
-        CASE (ETA_MINUS) ! lower wall
-            OppSideID = ElemToSide(E2S_SIDE_ID, ETA_PLUS, WElemID)
-            OppSideFlip = ElemToSide(E2S_FLIP, ETA_PLUS, WElemID)
-        CASE (ETA_PLUS) ! upper wall
-            OppSideID = ElemToSide(E2S_SIDE_ID, ETA_MINUS, WElemID)
-            OppSideFlip = ElemToSide(E2S_FLIP, ETA_MINUS, WElemID)
-        CASE (XI_MINUS) ! left vertical wall
-            OppSideID = ElemToSide(E2S_SIDE_ID, XI_PLUS, WElemID)
-            OppSideFlip = ElemToSide(E2S_FLIP, XI_PLUS, WElemID)
-        CASE (XI_PLUS) ! right vertical wall
-            OppSideID = ElemToSide(E2S_SIDE_ID, XI_MINUS, WElemID)
-            OppSideFlip = ElemToSide(E2S_FLIP, XI_MINUS, WElemID)
-        CASE (ZETA_MINUS) ! back vertical wall
-            OppSideID = ElemToSide(E2S_SIDE_ID, ZETA_PLUS, WElemID)
-            OppSideFlip = ElemToSide(E2S_FLIP, ZETA_PLUS, WElemID)
-        CASE (ZETA_PLUS) ! front vertical wall
-            OppSideID = ElemToSide(E2S_SIDE_ID, ZETA_MINUS, WElemID)
-            OppSideFlip = ElemToSide(E2S_FLIP, ZETA_MINUS, WElemID)
-        END SELECT
 
-        ! Check if h_wm is within the first element adjacent to the wall
-        hOnOppFace = 0
-        nextElem = 0
-        firstElem = 0
-
+        LOGWRITE(*,*) "====== Side ", SideID, " ======="
+        LOGWRITE(*,'(2(A4,2X),(A15,2X))') 'p', 'q', 'Within Element'
         DO q=0, PP_NZ; DO p=0, PP_N
-            ElemHeight = 0
-            DO i=1,3
-                ElemHeight = ElemHeight + (Face_xGP(i,p,q,0,OppSideID) - Face_xGP(i,p,q,0,SideID))**2
-            END DO
-            ElemHeight = SQRT(ElemHeight)
-            IF (ABS(ElemHeight - h_wm) .LE. WMLES_Tol) THEN
-                hOnOppFace = hOnOppFace + 1
-            ELSE IF ((ElemHeight - h_wm) .LT. 0) THEN
-                nextElem = nextElem + 1
-            ELSE IF ((ElemHeight - h_wm) .GE. 0) THEN
-                firstElem = firstElem + 1
+            SideID = WSideID
+            CALL FindHwmElement(p, q, SideID, hwmElemID)
+#if USE_MPI
+            ! Check if h_wm for this p,q is within the element of another MPI proc
+            IF (((hwmElemID - nElems) .GT. 0) .AND. ((hwmElemID - nElems) .LE. nNbProcs)) THEN ! hwmElem is in another proc
+                sendCnt = sendCnt + 1
+                ! Mount data to be sent
+                dataToSend(1,sendCnt) = myRank ! Send my rank so the other MPI proc knowns whom to return to
+                dataToSend(2,sendCnt) = SideToGlobalSide(SideID) ! Global SideID of "lower side" at adj. element, so that the receiving MPI proc.
+                                                                            ! can get his elemID, in order to get the oppositeSide and thus its info (face_xgp etc)
+                                                                            ! Unfortunately, this info is all tha THIS proc. have.
+                dataToSend(3:4,sendCnt) = (/p,q/)
+                dataToSend(5:7,sendCnt) = Face_xGP(:,p,q,0,WSideID) ! Position vector of p,q at wall side
+                dataToSend(8:10,sendCnt) = NormVec(:,p,q,0,WSideID) ! Normal vector of p,q at wall side
+
+                CALL MPI_ISEND(dataToSend(:,sendCnt),10, MPI_DOUBLE_PRECISION, NbProc(hwmElemID-nElems), &
+                    0, MPI_COMM_FLEXI, commRequests(hwmElemID-nElems), iErr)
+                commCntSend(hwmElemID-nElems) = commCntSend(hwmElemID-nElems)+1
+            ELSE ! Element is within my partition
+#endif
+
+            ! Mark this point's calculation (p,q,WSideID) as "my responsibility"
+            ! Also, store the NormVec and Face_xGP positions so that we can, once again,
+            ! see where in the physical domain h_wm lies, to check if we can approximate it
+            ! as any point inside this element, or if we need to interpolate.
+            nTauW_MINE = nTauW_MINE+1
+            tmpTauW_NormVec_MINE(:,nTauW_MINE) = NormVec(:,p,q,0,WSideID)
+            tmpTauW_FacexGP_MINE(:,nTauW_MINE) = Face_xGP(:,p,q,0,WSideID)
+            tmpTauW_Element_MINE(nTauW_MINE) = hwmElemID
+
+#if USE_MPI
             END IF
+#endif  
         END DO; END DO ! p, q
-        IF (hOnOppFace .GT. 0) THEN ! At least some points are on the opposite face
-            IF (hOnOppFace .EQ. (PP_NZ+1)*(PP_N+1)) THEN ! every point is on the opposite face
-                WRITE(*,*) "We take the opposite face's values!"
-                WRITE(*,*) "Elem, SideID, OppSideID, myRank"
-                WRITE(*,*) WElemID, SideID, OppSideID, myRank
-            ELSE IF (nextElem .GT. 0) THEN ! 
-
-            END IF
-        END IF
-        WRITE(*,*) "Elem, SideID, myRank"    
-        WRITE(*,*) WElemID, SideID, myRank
-
-        WRITE(*,*) hOnOppFace, nextElem, firstElem
-        CALL Abort(__STAMP__, ".")
-
-
-        IF (OppSideFlip .EQ. 0) THEN ! WElem is master of Top side. Hence, we should use info from UPrim_slave (adjacent element)
-          nSlaveSides = nSlaveSides + 1
-          tmpSlaveToTSide(nSlaveSides) = OppSideID
-          tmpSlaveToWMLES(nSlaveSides) = nWMLESSides
-        ELSE
-          nMasterSides = nMasterSides + 1
-          tmpMasterToTSide(nMasterSides) = OppSideID
-          tmpMasterToWMLES(nMasterSides) = nWMLESSides
-        END IF
     END IF
 END DO
+LOGWRITE(*,*) "====================== WMLES Exchange Location Info END ===================="
+IF (Logging) FLUSH(UNIT_logOut)
+
+
+#if USE_MPI
+WaitComm = .TRUE.
+
+! WMLES imposition procs send the "ending comm" message to each neighboring MPI proc
+! and will only wait for messages different from that on the WHILE loop below (that is, different data/count/tag)
+IF (nWMLESSides .NE. 0) THEN
+    WaitComm = .FALSE.
+    DO i=1,nNbProcs
+        sendCnt = sendCnt + 1 ! Just to make sure we do not modify any other buffer sent before
+        dataToSend(1,sendCnt) = myRank
+        dataToSend(2,sendCnt) = -(commCntSend(i)+1)
+        CALL MPI_ISEND(dataToSend(:,sendCnt), 10, MPI_DOUBLE_PRECISION, NbProc(i), 0, MPI_COMM_FLEXI, commRequests(i), iErr)
+    END DO
+END IF
+
+DO WHILE (ANY(WaitComm))
+    CALL MPI_RECV(dataToRecv(:), 10, MPI_DOUBLE_PRECISION, MPI_ANY_SOURCE, 0, MPI_COMM_FLEXI, iStat, iErr)
+    ! Map rank of sender to my local neighboring proc list
+    DO i=1,nNbProcs
+        IF (INT(dataToRecv(1)) .EQ. NbProc(i)) THEN
+            iNbProc=i
+            EXIT
+        END IF
+    END DO
+    commCntRcvd(iNbProc) = commCntRcvd(iNbProc) + 1
+
+    IF (INT(dataToRecv(2)) .LT. 0) THEN ! IF to check the ending comm WITH THIS PROC
+        maxCommRecv(iNbProc) = ABS(INT(dataToRecv(2))) ! Number of maximum comms to expect from this proc
+
+        IF (maxCommRecv(iNbProc) .EQ. commCntRcvd(iNbProc)) THEN ! Reached max cons: do not wait anymore
+            WaitComm(iNbProc) = .FALSE.
+        END IF
+
+        CYCLE
+    END IF
+
+    IF (maxCommRecv(iNbProc) .EQ. commCntRcvd(iNbProc)) THEN ! Reached max cons: do not wait anymore
+        WaitComm(iNbProc) = .FALSE.
+    END IF
+
+    ! Find my SideID which maps to the received globalSideID
+    DO i=1,nSides
+        IF (SideToGlobalSide(i) .EQ. INT(dataToRecv(2))) THEN
+            SideID = i
+            EXIT
+        END IF
+    END DO
+
+    hwmElemID = SideToElem(S2E_ELEM_ID, SideID)
+    IF (hwmElemID .LT. 0) THEN ! This partition is actually slave for this side, not master
+        hwmElemID = SideToElem(S2E_NB_ELEM_ID, SideID)
+    END IF
+
+    ! Search for h_wm element
+    CALL FindHwmElementMPI(INT(dataToRecv(3)), INT(dataToRecv(4)), dataToRecv(5:7), dataToRecv(8:10), SideID, hwmElemID)
+
+    IF (((hwmElemID - nElems) .GT. 0) .AND. ((hwmElemID - nElems) .LE. nNbProcs)) THEN ! hwmElem is in another proc
+        sendCnt = sendCnt + 1
+        ! Mount data to be sent
+        ! dataToSend(1,...), i.e., the rank of the sender, is not changed, because we want
+        ! the mpi proc with the element to communicate his ownership directly to the 
+        ! mpi proc responsible for boundary imposition
+        dataToSend(1,sendCnt) = dataToRecv(1)
+        dataToSend(2,sendCnt) = SideToGlobalSide(SideID) ! Global SideID of "lower side" at adj. element, so that the receiving MPI proc.
+                                                        ! can get his elemID, in order to get the oppositeSide and thus its info (face_xgp etc)
+                                                        ! Unfortunately, this info is all tha THIS proc. have.
+        dataToSend(3:4,sendCnt) = dataToRecv(3:4)
+        dataToSend(5:7,sendCnt) = dataToRecv(5:7) ! Position vector of p,q at wall side
+        dataToSend(8:10,sendCnt) = dataToRecv(8:10) ! Normal vector of p,q at wall side
+
+        CALL MPI_ISEND(dataToSend(:,sendCnt),10, MPI_DOUBLE_PRECISION, NbProc(hwmElemID-nElems), &
+                0, MPI_COMM_FLEXI, commRequests(hwmElemID-nElems), iErr)
+        commCntSend(hwmElemID-nElems) = commCntSend(hwmElemID-nElems)+1
+    ELSE ! Element is within my partition
+
+        ! Mark this point's calculation (p,q,WSideID) as "my responsibility"
+        ! Also, store the NormVec and Face_xGP positions so that we can, once again,
+        ! see where in the physical domain h_wm lies, to check if we can approximate it
+        ! as any point inside this element, or if we need to interpolate.
+        nTauW_MINE = nTauW_MINE+1
+        tmpTauW_NormVec_MINE(:,nTauW_MINE) = dataToRecv(8:10)
+        tmpTauW_FacexGP_MINE(:,nTauW_MINE) = dataToRecv(5:7)
+        tmpTauW_Element_MINE(nTauW_MINE) = hwmElemID
+
+    END IF
+END DO
+
+! By now, every MPI proc finished sending any info needed about finding the h_wm element.
+! Therefore, 
+
+#endif /* USE_MPI */
+
+
+!-----------------------------------------------------
+! Transform temp variables into permanent ones
+!-----------------------------------------------------
+ALLOCATE(TauW_NormVec_MINE(3,nTauW_MINE))
+ALLOCATE(TauW_FacexGP_MINE(3,nTauW_MINE))
+ALLOCATE(TauW_Element_MINE(nTauW_MINE))
+
+DO i=1,nTauW_MINE
+    TauW_Element_MINE(i) = tmpTauW_Element_MINE(i)
+    TauW_NormVec_MINE(:,i) = tmpTauW_NormVec_MINE(:,i)
+    TauW_FacexGP_MINE(:,i) = tmpTauW_FacexGP_MINE(:,i)
+END DO
+
+DEALLOCATE(tmpTauW_Element_MINE)
+DEALLOCATE(tmpTauW_NormVec_MINE)
+DEALLOCATE(tmpTauW_FacexGP_MINE)
+
+
+! From this point on, every partition that will calculate any of the WMLES_Tauw already knowns
+! their responsibility.
+! What is needed, now, is to check whether we can approximate the h_wm point as any of OUR points
+
+ALLOCATE(TauW_CalcInfo_MINE(5,nTauW_MINE))
+TauW_CalcInfo_MINE = 0
+
+! Check if any points that are my responsibility can be approximated by a point inside my element (or faces of this element)
+! Otherwise, there is a need for interpolation.
+DO i=1,nTauW_MINE
+    ! Calc x,y,z coordinates of h_wm within my element
+    h_wm_Coords = -1.*(h_wm*delta)*TauW_NormVec_MINE(:,i) + TauW_FacexGP_MINE(:,i)
+
+    WMLES_Tol = 0.15 ! temporary. Find a way to calculate this tolerance better (inscribed sphere? minimum distance between sides?)
+    Found = .FALSE.
+
+    ! Start searching on faces
+    DO LocSide=1,6
+        DO q=0,PP_NZ
+            DO p=0,PP_N
+                DistanceVect = h_wm_Coords - Face_xGP(:,p,q,0, ElemToSide(E2S_SIDE_ID, LocSide, TauW_Element_MINE(i)))
+                Distance = 0
+                DO j=1,3
+                    Distance = Distance + DistanceVect(j)**2
+                END DO
+                Distance = SQRT(Distance)
+
+                IF (Distance .LE. WMLES_Tol) THEN
+                    ! Approximate this h_wm point to the Face_xGP point. No interpolation needed.
+                    TauW_CalcInfo_MINE(1,i) = 1
+                    TauW_CalcInfo_MINE(2:4,i) = (/p,q,0/)
+                    TauW_CalcInfo_MINE(5,i) = ElemToSide(E2S_SIDE_ID, LocSide, TauW_Element_MINE(i))
+                    Found = .TRUE.
+                    EXIT
+                END IF
+            END DO
+            IF (Found) EXIT
+        END DO
+        IF (Found) EXIT
+    END DO
+
+    ! Nothing found on faces. Check inside elements
+    DO r=0,PP_NZ
+        IF (Found) EXIT
+        DO q=0,PP_N
+            IF (Found) EXIT
+            DO p=0,PP_N
+                IF (Found) EXIT
+
+                DistanceVect = h_wm_Coords - Elem_xGP(:,p,q,r,TauW_Element_MINE(i))
+                Distance = 0
+                DO j=1,3
+                    Distance = Distance + DistanceVect(j)**2
+                END DO
+                Distance = SQRT(Distance)
+
+                IF (Distance .LE. WMLES_Tol) THEN
+                    ! Approximate this h_wm point to the Elem_xGP point. No interpolation needed.
+                    TauW_CalcInfo_MINE(1,i) = 2
+                    TauW_CalcInfo_MINE(2:4,i) = (/p,q,r/)
+                    TauW_CalcInfo_MINE(5,i) = TauW_Element_MINE(i)
+                    Found = .TRUE.
+                END IF
+            END DO
+        END DO
+    END DO
+
+    ! If Found is still .FALSE., there is a need for interpolation.
+    ! Hence, set up the interpolation vars for this point.
+
+    ! Steps:
+    ! 1. Calculate Lagrange polynomials, in each direction, for the point in question
+    ! (Should this be on standard or physical domain? .... Check it out)
+    ! 2. Set up this matrix of l_xi,l_eta,l_zeta.
+    ! 3. Map somehow this new matrix to the current point (possibily in an index with TauW_MINE (i) index)
+END DO
+
+
+CALL Abort(__STAMP__, ".")
+
 IF (nMasterSides+nSlaveSides .NE. nWMLESSides) CALL Abort(__STAMP__,&
                                         'Number of WMLES sides in mappings do not match!')
 
@@ -334,6 +545,217 @@ SWRITE(UNIT_stdOut,'(A)')' INIT Wall-Modeled LES DONE!'
 SWRITE(UNIT_StdOut,'(132("-"))')
 
 END SUBROUTINE InitWMLES
+
+
+!==================================================================================================================================
+!> Get the ID of the side opposite of that indicated by SideID, in the same element
+!==================================================================================================================================
+SUBROUTINE GetOppositeSide(SideID, ElemID)
+! MODULES
+USE MOD_Mesh_Vars,              ONLY: SideToElem, ElemToSide
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER, INTENT(IN)                 :: ElemID
+INTEGER, INTENT(INOUT)              :: SideID
+!----------------------------------------------------------------------------------------------------------------------------------
+INTEGER                             :: LocSide, tmpElemID
+!==================================================================================================================================
+
+tmpElemID = SideToElem(S2E_ELEM_ID, SideID)
+IF (tmpElemID .EQ. ElemID) THEN ! ElemID is master of this side
+    LocSide = SideToElem(S2E_LOC_SIDE_ID, SideID)
+ELSE ! ElemID is slave of this side
+    LocSide = SideToElem(S2E_NB_LOC_SIDE_ID, SideID)
+END IF
+
+SELECT CASE(LocSide)
+CASE (ETA_MINUS)
+    SideID = ElemToSide(E2S_SIDE_ID, ETA_PLUS, ElemID)
+CASE (ETA_PLUS)
+    SideID = ElemToSide(E2S_SIDE_ID, ETA_MINUS, ElemID)
+CASE (XI_MINUS)
+    SideID = ElemToSide(E2S_SIDE_ID, XI_PLUS, ElemID)
+CASE (XI_PLUS)
+    SideID = ElemToSide(E2S_SIDE_ID, XI_MINUS, ElemID)
+CASE (ZETA_MINUS)
+    SideID = ElemToSide(E2S_SIDE_ID, ZETA_PLUS, ElemID)
+CASE (ZETA_PLUS)
+    SideID = ElemToSide(E2S_SIDE_ID, ZETA_MINUS, ElemID)
+END SELECT
+
+END SUBROUTINE
+
+!==================================================================================================================================
+!> Get the ID of element where the exchange location point, h_wm (p,q), lies.
+!==================================================================================================================================
+SUBROUTINE FindHwmElement(p, q, SideID, hwmElemID)
+! MODULES
+USE MOD_Globals
+USE MOD_Mesh_Vars,              ONLY: NormVec, Face_xGP, SideToElem, ElemToSide, nElems
+USE MOD_WMLES_Vars
+#if USE_MPI
+USE MOD_MPI_Vars
+#endif
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER, INTENT(IN)                 :: p, q
+INTEGER, INTENT(INOUT)              :: hwmElemID, SideID!, OppSideID
+!----------------------------------------------------------------------------------------------------------------------------------
+REAL                                :: Height, abs_h_wm, Tol
+REAL                                :: DistanceVect(1:3), InwardNorm(1:3)
+LOGICAL                             :: FoundOrNomB, Master
+INTEGER                             :: tmpElem, WallSideID, cnt
+INTEGER                             :: iNbProc
+!==================================================================================================================================
+FoundOrNomB = .FALSE. ! Logical to check whether h_wm has been Found or if it is None of my Bussiness (i.e. not in my partition)
+
+abs_h_wm = h_wm*delta ! get absolute value of off-wall distance
+WallSideID = SideID
+
+! Get wall adjacent element from SideID
+hwmElemID = SideToElem(S2E_ELEM_ID, WallSideID) ! ELEM_ID: Wall elements are always masters of BC sides
+
+! Calc inward normal vector with magnitude h_wm, at point p,q. Use it to check in which
+! element does h_wm lies.
+InwardNorm = -1.*abs_h_wm*NormVec(1:3,p,q,0,WallSideID)
+
+! This element check is naive: for highly curved walls with low polynomial degrees, there
+! might exist a h_wm with y-component < d_y, but lieing within the next element, not
+! the current one. This might happen for either concave or convex walls
+cnt = 0
+DO WHILE (FoundOrNomB .EQV. .FALSE.)
+    cnt = cnt + 1
+    CALL GetOppositeSide(SideID, hwmElemID)
+    DistanceVect = Face_xGP(1:3,p,q,0,SideID) - Face_xGP(1:3,p,q,0,WallSideID)
+    tmpElem = hwmElemID
+    Tol = 1E-3 ! Tol should be set to 10% of distance between nodes.
+    ! In order to do that, calc the element "height" (mag(distanceVect)/nElems)/PP_N
+    ! where nElems is the number of elements we've advanced in this loop.
+
+    IF (ABS(DistanceVect(2) - InwardNorm(2)) .GT. Tol) THEN ! IF TRUE: NOT THE SAME POINT, so check which element
+        IF ((DistanceVect(2) - InwardNorm(2)) .LT. 0) THEN ! Negative distance: h_wm "higher" than d: next elem
+            hwmElemID = SideToElem(S2E_ELEM_ID, SideID) ! Get adjacent element interfacing at SideID
+            ! If hwmElemID is not equal to tmpElem (or -1), it means that THIS element is slave, not master, of OppSide
+            ! since ELEM_ID was used.
+            Master = .FALSE.
+            IF (hwmElemID .EQ. tmpElem) THEN ! Element is master of OppSide: get the nb element then
+                Master = .TRUE.
+                hwmElemID = SideToElem(S2E_NB_ELEM_ID, SideID)
+            END IF
+#if USE_MPI
+            IF (hwmElemID .EQ. -1) THEN ! Element in another MPI proc.
+                ! Thus, it is none of my business -- get out of the loop
+                FoundOrNomB = .TRUE.
+
+                ! Identify which neighboring processor owns the element.
+                IF (Master .EQV. .TRUE.) THEN
+                    DO iNbProc=1,nNbProcs
+                        IF ((SideID .GT. OffsetMPISides_MINE(iNbProc-1)) .AND. (SideID .LE. OffsetMPISides_MINE(iNbProc))) THEN
+                            hwmElemID = nElems + iNbProc ! The information on which nbProc holds the next element goes in hwmElemID
+                            EXIT
+                        END IF
+                    END DO
+                ELSE
+                    DO iNbProc=1,nNbProcs
+                        IF ((SideID .GT. OffsetMPISides_YOUR(iNbProc-1)) .AND. (SideID .LE. OffsetMPISides_YOUR(iNbProc))) THEN
+                            hwmElemID = nElems + iNbProc ! The information on which nbProc holds the next element goes in hwmElemID
+                            EXIT
+                        END IF
+                    END DO
+                END IF
+            END IF
+#endif
+        ELSE ! Positive: h_wm "smaller" than d. Consider being within this element.
+            FoundOrNomB = .TRUE.
+        END IF
+    ELSE ! h_wm_y and d_y are very close: h_wm lies within this element.
+        ! TODO: Since it lies on the face, say that it is within the upper element, so we get
+        ! info from the upper polynomial approximation, which is generally better (mesh reqs.)
+        FoundOrNomB = .TRUE.
+    END IF
+END DO
+
+END SUBROUTINE FindHwmElement
+
+#if USE_MPI
+!==================================================================================================================================
+!> Get the ID of element where the exchange location point, h_wm (p,q), lies.
+!==================================================================================================================================
+SUBROUTINE FindHwmElementMPI(p, q, NormVecWall, FacexGPWall, SideID, hwmElemID)
+! MODULES
+USE MOD_Globals
+USE MOD_Mesh_Vars,              ONLY: NormVec, Face_xGP, SideToElem, ElemToSide, nElems
+USE MOD_WMLES_Vars
+#if USE_MPI
+USE MOD_MPI_Vars
+#endif
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER, INTENT(IN)                 :: p, q
+REAL, INTENT(IN)                    :: NormVecWall(3), FacexGPWall(3)
+INTEGER, INTENT(INOUT)              :: hwmElemID, SideID!, OppSideID
+!----------------------------------------------------------------------------------------------------------------------------------
+REAL                                :: Height, abs_h_wm, Tol
+REAL                                :: DistanceVect(1:3), InwardNorm(1:3)
+LOGICAL                             :: FoundOrNomB, Master
+INTEGER                             :: tmpElem, WallSideID, cnt
+INTEGER                             :: iNbProc
+!==================================================================================================================================
+FoundOrNomB = .FALSE.
+InwardNorm = -1.*(h_wm*delta)*NormVecWall(1:3)
+
+DO WHILE (FoundOrNomB .EQV. .FALSE.)
+    CALL GetOppositeSide(SideID, hwmElemID)
+    DistanceVect = Face_xGP(:,p,q,0,SideID) - FacexGPWall(:)
+    tmpElem = hwmElemID
+    Tol = 1e-3
+    IF (ABS(DistanceVect(2) - InwardNorm(2)) .GT. Tol) THEN ! It can't be approximate as the face point
+        IF ((DistanceVect(2) - InwardNorm(2)) .LT. 0) THEN ! h_wm above this element
+            hwmElemID = SideToElem(S2E_ELEM_ID, SideID)
+            Master = .FALSE.
+            IF (hwmElemID .EQ. tmpElem) THEN
+                Master = .TRUE.
+                hwmElemID = SideToElem(S2E_NB_ELEM_ID, SideID)
+            END IF
+
+            IF (hwmElemID .EQ. -1) THEN ! Next element in another MPI proc.
+                FoundOrNomB = .TRUE. ! This is none of my business then.
+
+                ! Identify which neighboring processor owns the element.
+                IF (Master .EQV. .TRUE.) THEN
+                    DO iNbProc=1,nNbProcs
+                        IF ((SideID .GT. OffsetMPISides_MINE(iNbProc-1)) .AND. (SideID .LE. OffsetMPISides_MINE(iNbProc))) THEN
+                            hwmElemID = nElems + iNbProc ! The information on which nbProc holds the next element goes in hwmElemID
+                            EXIT
+                        END IF
+                    END DO
+                ELSE
+                    DO iNbProc=1,nNbProcs
+                        IF ((SideID .GT. OffsetMPISides_YOUR(iNbProc-1)) .AND. (SideID .LE. OffsetMPISides_YOUR(iNbProc))) THEN
+                            hwmElemID = nElems + iNbProc ! The information on which nbProc holds the next element goes in hwmElemID
+                            EXIT
+                        END IF
+                    END DO
+                END IF
+            END IF
+
+        ELSE ! h_wm is within this element
+            FoundOrNomB = .TRUE.
+        END IF
+
+    ELSE ! This h_wm can be approximated as the face point
+        ! TODO (in both functions)
+        ! Mark this as the element above, so the info on the face of the next element is used
+        ! In order to do so, a check whether it is in another MPI proc or MINE should be done
+        FoundOrNomB = .TRUE.
+    END IF
+END DO
+
+END SUBROUTINE FindHwmElementMPI
+#endif /* USE_MPI */
 
 !==================================================================================================================================
 !> Compute the wall stress, tau_w, at each point in a WMLES BC surface.
