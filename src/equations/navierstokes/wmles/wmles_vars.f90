@@ -23,52 +23,85 @@ SAVE
 
 INTEGER, PARAMETER :: WMLES_SCHUMANN = 1
 INTEGER, PARAMETER :: WMLES_WERNERWANGLE = 2
-INTEGER, PARAMETER :: WMLES_EQTBLE = 3
+INTEGER, PARAMETER :: WMLES_REICHARDT = 3
+INTEGER, PARAMETER :: WMLES_SPALDING = 4
+INTEGER, PARAMETER :: WMLES_EQTBLE = 5
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
 INTEGER                     :: WallModel ! Integer corresponding to the WallModel
-REAL                        :: h_wm
+REAL                        :: h_wm, abs_h_wm
 REAL                        :: delta
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
                                                    ! Second and third indices: indices "i,j" of the BC face
-                                                   ! Fourth index: SideID
-REAL,ALLOCATABLE            :: Side_OffWallDist(:,:,:) ! Off-wall distance h_wm for each point of each WMLES Side
-                                                       ! First and second indices: "i,j" of face
-                                                       ! Third index: WMLESSideID
+                                                   ! Fourth index: WMLES Side
+
 INTEGER                     :: nWMLESSides ! Number of WMLES BC Sides                                                   
-INTEGER,ALLOCATABLE         :: WMLES_Side(:) ! Mapping between WMLES BC Side and Mesh BCSide.
-                                           ! Usage: WMLES_Side(SideID), SideID \in [1:nBCSides]
+INTEGER,ALLOCATABLE         :: BCSideToWMLES(:) ! Mapping between WMLES BC Side and Mesh BCSide.
+                                           ! Usage: BCSideToWMLES(SideID), SideID \in [1:nBCSides]
                                            ! OUTPUT: [1:nWMLESSides]
-INTEGER,ALLOCATABLE         :: WMLES_SideInv(:) ! Inverse of WMLES_Side mapping, that is,
+INTEGER,ALLOCATABLE         :: WMLESToBCSide(:) ! Inverse of BCSideToWMLES mapping, that is,
                                                 ! get SideID of BC from WMLESSideID
-INTEGER,ALLOCATABLE         :: SlaveToTSide(:), MasterToTSide(:) ! Mapping between WMLES wall side to the top side of element
-                                                    ! arranged in master/slave so that we known which to use for the info on the adjacent element,
-                                                    ! that is, UPrim_master/slave.
-INTEGER,ALLOCATABLE         :: SlaveToWMLESSide(:), MasterToWMLESSide(:)
-INTEGER                     :: nSlaveSides, nMasterSides ! number of slave and master (to this MPI proc) sides where info is to be exchanged
+
 LOGICAL                     :: WMLESInitDone = .FALSE.
 
 #if USE_MPI
 !----------------------------------------------------------------------------------------------------------------------------------
 ! MPI VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
-INTEGER                     :: nLocalNbElem ! number of local neighbor elements
-INTEGER                     :: nMPINbElem ! number of neighbor elements in other MPI partitions
-! Vars above are old.. delete?
+INTEGER, ALLOCATABLE        :: nTauW_MINE(:) ! Number of points to calculate tau_w, for each MPI proc. (nProcs_SendTauW)
+                                             ! this partition needs to send the results later
+INTEGER, ALLOCATABLE        :: nTauW_YOURS(:) !
 
-INTEGER, ALLOCATABLE        :: ProcToRecvWMLES_Tau(:) ! List of MPI Procs to Receive WMLES_Tau info so that it can be implemented
-                                                      ! in OUR WMLES_Side.
+REAL, ALLOCATABLE           :: TauW_MINE(:,:,:) ! Array to store wall shear stress computed by this MPI proc. that must be sent
+                                                ! to the MPI proc. responsible for BC imposition.
+                                                ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_zy
+                                                ! Second index: Local points of my responsibility, with respect to each MPI proc that we must communicate later
+                                                ! Third index: MPI proc responsible for BC imposition -- the one we should send the results later
 
-REAL, ALLOCATABLE           :: TauW_NormVec_MINE(:,:)
-REAL, ALLOCATABLE           :: TauW_FacexGP_MINE(:,:)
-INTEGER, ALLOCATABLE        :: TauW_Element_MINE(:)
-INTEGER, ALLOCATABLE        :: TauW_CalcInfo_MINE(:,:) ! Information on the point h_wm that is my responsibility to calculate
-                                                       ! Indices -- 1: Interpolate (0), Side point(1) or Element point(2)
-                                                       !            2:4: i,j,k of face or element points (k=0 for face)
-                                                       !            5: Side or Element ID
+REAL, ALLOCATABLE           :: TauW_YOURS(:,:,:) ! Array to store wall shear stress received from MPI procs. responsible for tau_w calculation
+                                                 ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_zy
+                                                 ! Second index: Local points, associated to a WMLES Side, and with respect to another MPI proc.
+                                                 ! Third index: MPI proc to receive tau_w from.
+
+REAL, ALLOCATABLE           :: TauW_MINE_TangVec(:,:,:) ! Wall-tangent vectors (1:3,:,:) for each point that this MPI proc.
+                                                        ! is responsible for computing tau_w (:,j,:), and each MPI proc. to send
+                                                        ! the data (:,:,i)
+
+INTEGER, ALLOCATABLE        :: TauW_Proc(:,:,:,:) ! Mapping between the node (p,q) of BC imposition within a WMLES Side
+                                                  ! and the local point/MPI proc. responsible for calculating Tau_W for this node/side
+
+INTEGER                     :: nProcs_RecvTauW, nProcs_SendTauW ! Number of MPI procs. to send/receive tau_w info
+
+INTEGER, ALLOCATABLE        :: Proc_RecvTauW(:), Proc_SendTauW(:) ! Mapping between local to global index of MPI procs to send/receive TauW
+                                                                  ! [1:nProcs_(Send/Recv)TauW]
+INTEGER, ALLOCATABLE        :: Proc_RecvTauW_Inv(:) ! Inverse mapping of the above, that is, from global MPI rank to local receiving rank.
+
+INTEGER, ALLOCATABLE        :: nTauW_MINE_FacePoint(:), nTauW_MINE_InteriorPoint(:), nTauW_MINE_Interpolate(:) ! Number of face/interior points that may
+                                                                                                      ! be used to approximate h_wm, or number of
+                                                                                                      ! h_wm points that must be interpolated, for each MPI proc.
+                                                                                                      ! that this partition is responsible for calculating/comm.
+                                                                                                      ! tau_w values
+
+INTEGER, ALLOCATABLE        :: FaceToLocalPoint(:), InteriorToLocalPoint(:), InterpToLocalPoint(:) ! Mappings between face/interior/interpolation point and
+                                                                                                   ! the local points for each MPI proc. that THIS proc. should 
+                                                                                                   ! calculate tau_w for
+
+INTEGER, ALLOCATABLE        :: TauW_MINE_FacePoint(:,:,:) ! If h_wm may be approximated as a face point, then this array stores
+                                                              ! mapping from the local tau_w point with respect each MPI proc. to p,q and SideID
+                                                              ! First index: 1-3 (/p,q,SideID/)
+                                                              ! Second index: Local Tau_W calc point (with respect to each MPI proc. responsible for imposition)
+                                                              ! Third index: MPI proc. to send info
+
+INTEGER, ALLOCATABLE        :: TauW_MINE_InteriorPoint(:,:,:) ! If h_wm may be approximated as an interior element point, then this array stores
+                                                              ! mapping from the local tau_w point with respect each MPI proc. to p,q,r and ElemID
+                                                              ! First index: 1-4 (/p,q,r,ElemID/)
+                                                              ! Second index: Local Tau_W calc point (with respect to each MPI proc. responsible for imposition)
+                                                              ! Third index: MPI proc. to send info
+
+INTEGER, ALLOCATABLE        :: WMLES_RecvRequests(:), WMLES_SendRequests(:) ! Requests for the non-blocking send/receive operations
 
 
 !=================================================================================================================================

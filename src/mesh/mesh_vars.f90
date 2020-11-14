@@ -75,6 +75,7 @@ INTEGER,ALLOCATABLE :: ElemInfo(:,:)           !< array containing the node and 
 INTEGER,ALLOCATABLE :: SideInfo(:,:)           !< array containing the connectivity, flip,... of the sides as stored in the
                                                !< mesh file
 INTEGER,ALLOCATABLE :: SideToGlobalSide(:)     !< maps the local SideIDs to global SideIDs (for parallel debug purposes)
+INTEGER,ALLOCATABLE :: ElemToGlobalElem(:)     !< maps the local ElemID to global ElemIDs (for parallel debug purposes and wall model pre-process)
 INTEGER,ALLOCATABLE :: ElemToSide(:,:,:)       !< Array containing element-wise connectivity information to sides
                                                !< SideID    = ElemToSide(E2S_SIDE_ID,ZETA_PLUS,iElem)
                                                !< flip      = ElemToSide(E2S_FLIP,ZETA_PLUS,iElem)

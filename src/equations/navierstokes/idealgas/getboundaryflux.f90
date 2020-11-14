@@ -530,7 +530,7 @@ USE MOD_EddyVisc_Vars,ONLY: muSGS_master
 #endif
 #if WMLES
 USE MOD_WMLES        ,ONLY: EvalDiffFlux3D_WMLES
-USE MOD_WMLES_Vars   ,ONLY: WMLES_Tauw, WMLES_Side
+USE MOD_WMLES_Vars   ,ONLY: WMLES_Tauw, BCSideToWMLES
 #endif
 USE MOD_Testcase     ,ONLY: GetBoundaryFluxTestcase
 !----------------------------------------------------------------------------------------------------------------------------------
@@ -640,7 +640,7 @@ ELSE
 #ifdef WMLES
     CASE(5)
       LOGWRITE(*,*) '============== WMLES BOUNDARY FLUX ==============='
-      LOGWRITE(*,*) 'nWMLESSide', WMLES_Side(SideID)
+      LOGWRITE(*,*) 'nWMLESSide', BCSideToWMLES(SideID)
       ! Euler flux evaluation
       ! This is done through a Riemann solver on the boundary, by setting the ghost
       ! state as the same of inner state, however with a "negated" normal velocity
@@ -695,8 +695,8 @@ ELSE
       ! Diffusive (Viscous) flux evaluation
       ! This is "straightforward", since we simply set it to the known, computed 
       ! wall shear stress components.
-      IF (WMLES_Side(SideID) .EQ. 0) CALL Abort(__STAMP__, 'OOOppss, no WMLESSide')
-      CALL EvalDiffFlux3D_WMLES(Nloc, UPrim_master, WMLES_Tauw(:,:,:, WMLES_Side(SideID)), Fd_Face_loc, Gd_Face_loc, Hd_Face_loc)
+      IF (BCSideToWMLES(SideID) .EQ. 0) CALL Abort(__STAMP__, 'OOOppss, not a WMLESSide')
+      CALL EvalDiffFlux3D_WMLES(Nloc, UPrim_master, WMLES_Tauw(:,:,:, BCSideToWMLES(SideID)), Fd_Face_loc, Gd_Face_loc, Hd_Face_loc)
 #endif /* WMLES */
 
     CASE(9)

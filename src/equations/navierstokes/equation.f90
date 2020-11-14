@@ -187,8 +187,10 @@ SWRITE(UNIT_StdOut,'(132("-"))')
 ! Initialize current testcase
 CALL InitTestcase()
 
+#if WMLES
 ! Initialize WMLES
 CALL InitWMLES()
+#endif
 
 END SUBROUTINE InitEquation
 
