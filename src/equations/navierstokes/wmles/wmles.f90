@@ -103,7 +103,7 @@ LOGICAL, ALLOCATABLE            :: TauW_MINE_IsFace(:,:), TauW_MINE_IsInterior(:
 INTEGER                         :: sendRequest
 
 #if USE_MPI
-INTEGER, ALLOCATABLE            :: OthersElemInfo(:,:), OthersSideInfo(:,:)
+INTEGER, ALLOCATABLE            :: OthersSideInfo(:,:), OthersElemInfo(:)
 INTEGER                         :: iStat(MPI_STATUS_SIZE)
 INTEGER                         :: hwmRank
 #endif
@@ -195,21 +195,26 @@ DO iSide=1,nBCSides
                 ! Check whose element is this, so that we read correct info from file
                 hwmRank = ELEMIPROC(Glob_hwmElemID)
                 SDEALLOCATE(OthersElemInfo)
-                FirstElemInd = offsetElemMPI(hwmRank)+1
-                LastElemInd = offsetElemMPI(hwmRank+1)
-                ALLOCATE(OthersElemInfo(6,FirstElemInd:LastElemInd))
+                ! FirstElemInd = offsetElemMPI(hwmRank)+1
+                ! LastElemInd = offsetElemMPI(hwmRank+1)
+                ! ALLOCATE(OthersElemInfo(6,FirstElemInd:LastElemInd))
+                ALLOCATE(OthersElemInfo(6))
 
                 IF (.NOT. (hwmRank.EQ.myRank)) THEN
                     ! Read the correct portion of mesh file
-                    CALL ReadArray('ElemInfo',2,(/6,(LastElemInd-FirstElemInd+1)/),offsetElemMPI(hwmRank),2,IntArray=OthersElemInfo)
+                    ! CALL ReadArray('ElemInfo',2,(/6,(LastElemInd-FirstElemInd+1)/),offsetElemMPI(hwmRank),2,IntArray=OthersElemInfo)
+                    CALL ReadArray('ElemInfo',1,(/6/),Glob_hwmElemID-1,1,IntArray=OthersElemInfo)
                 ELSE
                     ! Use the ElemInfo already in memory from mesh read-in
-                    OthersElemInfo = ElemInfo
+                    ! OthersElemInfo = ElemInfo
+                    OthersElemInfo = ElemInfo(:,Glob_hwmElemID)
                 END IF
 
                 SDEALLOCATE(OthersSideInfo)
-                offsetSideID=OthersElemInfo(3,FirstElemInd) ! hdf5 array starts at 0-> -1
-                nSideIDs    =OthersElemInfo(4,LastElemInd)-OthersElemInfo(3,FirstElemInd)
+                ! offsetSideID=OthersElemInfo(3,FirstElemInd) ! hdf5 array starts at 0-> -1
+                ! nSideIDs    =OthersElemInfo(4,LastElemInd)-OthersElemInfo(3,FirstElemInd)
+                offsetSideID=OthersElemInfo(3) ! hdf5 array starts at 0-> -1
+                nSideIDs    =OthersElemInfo(4)-OthersElemInfo(3)
                     
                 FirstSideInd=offsetSideID+1
                 LastSideInd =offsetSideID+nSideIDs
@@ -220,30 +225,33 @@ DO iSide=1,nBCSides
                     CALL ReadArray('SideInfo',2,(/5,(nSideIDs)/),offsetSideID,2,IntArray=OthersSideInfo)
                 ELSE
                     ! Use the SideInfo already in memory from mesh read-in
-                    OthersSideInfo = SideInfo
+                    ! OthersSideInfo = SideInfo
+                    OthersSideInfo = SideInfo(:,FirstSideInd:LastSideInd)
                 END IF
 
                 ! Scan the list of sides looking for a side with the Ind = GlobalOppSideID
-                ! If found, check if this side is inner to the GlobalhwmElement.
-                ! If so, we found our guy. Otherwise, we found the inner side of a neighbor. Keep looking.
+                ! If found, check if this side is inner to the GlobalhwmElement. (deprecated)
+                ! If so, we found our guy. Otherwise, we found the inner side of a neighbor. Keep looking. (deprecated)
                 DO i=FirstSideInd, LastSideInd
                     IF (ABS(OthersSideInfo(2,i)) .EQ. GlobalOppSideID) THEN
                         ! Ok, we found a candidate.
-                        IF ((i.GT.OthersElemInfo(3,Glob_hwmElemID)) .AND. (i.LE.OthersElemInfo(4,Glob_hwmElemID))) THEN
+                        ! IF ((i.GT.OthersElemInfo(3,Glob_hwmElemID)) .AND. (i.LE.OthersElemInfo(4,Glob_hwmElemID))) THEN
                             ! Yes, this is our guy.
                             InnerOppSideID = i
                             EXIT
-                        END IF
+                        ! END IF
                     END IF
                 END DO
 
                 ! NodeCoords array was deallocated after mesh read-in, so we read it again regardless
                 CALL ReadArray('NodeCoords',2,(/3,(NGeo+1)**3/),(Glob_hwmElemID-1)*(NGeo+1)**3,2,RealArray=hwmElem_NodeCoords)
                 ! Now get opposite side of WMLES Side or of the previous side being analyzed and its coords
-                LocSide = InnerOppSideID - OthersElemInfo(3,Glob_hwmElemID)
+                ! LocSide = InnerOppSideID - OthersElemInfo(3,Glob_hwmElemID)
+                LocSide = InnerOppSideID - OthersElemInfo(3)
                 SELECT CASE(LocSide)
                 CASE (ETA_MINUS)
-                    InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ETA_PLUS
+                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ETA_PLUS
+                    InnerOppSideID = OthersElemInfo(3) + ETA_PLUS
                     OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,NGeo,0)
                     OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,0,NGeo,NGeo)
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,NGeo,0)
@@ -251,7 +259,8 @@ DO iSide=1,nBCSides
                     ! Compute the vector to check node approximation tolerance
                     TolVec = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (ETA_PLUS)
-                    InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ETA_MINUS
+                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ETA_MINUS
+                    InnerOppSideID = OthersElemInfo(3) + ETA_MINUS
                     OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,0)
                     OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,NGeo,0,0)
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,0,NGeo)
@@ -259,7 +268,8 @@ DO iSide=1,nBCSides
                     ! Compute the vector to check node approximation tolerance
                     TolVec = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (XI_MINUS)
-                    InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_PLUS
+                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_PLUS
+                    InnerOppSideID = OthersElemInfo(3) + XI_PLUS
                     OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,NGeo,0,0)
                     OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,NGeo,NGeo,0)
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,0,NGeo)
@@ -267,7 +277,8 @@ DO iSide=1,nBCSides
                     ! Compute the vector to check node approximation tolerance
                     TolVec = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (XI_PLUS)
-                    InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_MINUS
+                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_MINUS
+                    InnerOppSideID = OthersElemInfo(3) + XI_MINUS
                     OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,0)
                     OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,0,0,NGeo)
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,NGeo,0)
@@ -275,7 +286,8 @@ DO iSide=1,nBCSides
                     ! Compute the vector to check node approximation tolerance
                     TolVec = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (ZETA_MINUS)
-                    InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_PLUS
+                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_PLUS
+                    InnerOppSideID = OthersElemInfo(3) + ZETA_PLUS
                     OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,NGeo)
                     OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,NGeo,0,NGeo)
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,NGeo,NGeo)
@@ -283,7 +295,8 @@ DO iSide=1,nBCSides
                     ! Compute the vector to check node approximation tolerance
                     TolVec = hwmElem_NodeCoords(:,0,0,NGeo) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (ZETA_PLUS)
-                    InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_MINUS
+                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_MINUS
+                    InnerOppSideID = OthersElemInfo(3) + ZETA_MINUS
                     OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,0)
                     OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,0,NGeo,0)
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,0,0)
@@ -352,12 +365,26 @@ DO iSide=1,nBCSides
             TauW_Proc_tmp(1,p,q,nWMLESSides) = hwmRank
             TauW_Proc_tmp(2,p,q,nWMLESSides) = WallStressCount_local(hwmRank)
             OthersPointInfo(1:3,WallStressCount_local(hwmRank),hwmRank) = h_wm_Coords
+
+            ! TODO:
+            ! The normal and tangent vectors are oriented in outward-facing coordinates
+            ! with the tangent vector in z pointing to z+. Hence, for a lower wall, the 
+            ! tangent vector in the x direction is poiting to x-, so we need the "-" sign.
+            ! However, for upper walls, for example, the tangent vector in x direction will 
+            ! be pointing to x+, so we do not need the "-" sign.
+            ! Thus, a "check" must be implemented here so that we pass the tang. vec. pointing
+            ! to the correct direction, that is, streamwise.
+
+            ! One solution would be to take the dot product of this vector and the initial
+            ! velocity so that we know if it is streamwise or not, and change sign accordingly.
             OthersPointInfo(4:6,WallStressCount_local(hwmRank),hwmRank) = -TangVec2(:,p,q,0,iSide)
             OthersPointInfo(7,WallStressCount_local(hwmRank),hwmRank) = Glob_hwmElemID
 
         END DO; END DO ! p, q
     END IF ! 
 END DO
+SDEALLOCATE(OthersSideInfo)
+SDEALLOCATE(OthersElemInfo)
 
 CALL MPI_REDUCE(nWMLESSides, TotalNWMLESSides, 1, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_FLEXI, iError)
 IF (MPIRoot .AND. (TotalNWMLESSides .EQ. 0)) THEN
@@ -569,7 +596,7 @@ DO i=0,nProcs_SendTauW
 
     ! Sanity check
     IF ((nTauW_MINE_FacePoint(i)+nTauW_MINE_Interpolate(i)+nTauW_MINE_InteriorPoint(i)) &
-                .NE. nTauW_MINE(i)) CALL Abort(__STAMP__,"Danling points?")
+                .NE. nTauW_MINE(i)) CALL Abort(__STAMP__,"Dangling points?")
 
 END DO ! i -- message from each process having a BC side which needs our calculation of tau_w
 
@@ -616,7 +643,9 @@ LOGWRITE(*,*) '---------------------------------------'
 LOGWRITE(*,*) "====================== END WMLES Info ===================="
 IF (Logging) FLUSH(UNIT_logOut)
 
-
+SDEALLOCATE(TauW_MINE_IsFace)
+SDEALLOCATE(TauW_MINE_IsInterior)
+SDEALLOCATE(TauW_MINE_IsInterpolation)
 
 
 !!!>> IMPORTANT INFO:
@@ -745,8 +774,8 @@ SELECT CASE(WallModel)
 
             ! Face_xGP is only populated for master sides, so that only master sides have approximation nodes (check InitWMLES above)
             ! hence, use of UPrim_master is guaranteed to be correct here
-            !utang = DOT_PRODUCT(UPrim_master(2,p,q,SideID),TauW_MINE_TangVec(:,FaceToLocalPoint(FPInd),sProc))
-            utang = UPrim_master(2,p,q,SideID)
+            utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_TangVec(:,FaceToLocalPoint(FPInd),sProc))
+            ! utang = UPrim_master(2,p,q,SideID)
 
             u_tau = SQRT(1.0/UPrim_master(1,p,q,SideID)) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
@@ -761,8 +790,8 @@ SELECT CASE(WallModel)
             r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
             ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
 
-            !utang = DOT_PRODUCT(U(2,p,q,r,ElemID),TauW_MINE_TangVec(:,InteriorToLocalPoint(IPInd),sProc))
-            utang = U(2,p,q,r,ElemID)
+            utang = DOT_PRODUCT(U(2:4,p,q,r,ElemID),TauW_MINE_TangVec(:,InteriorToLocalPoint(IPInd),sProc))
+            ! utang = U(2,p,q,r,ElemID)
 
             u_tau = SQRT(1.0/U(1,p,q,r,ElemID)) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
@@ -920,7 +949,7 @@ IMPLICIT NONE
 INTEGER                     :: iProc
 !==================================================================================================================================
 DO iProc=1,nProcs_RecvTauW
-    CALL MPI_IRECV(TauW_YOURS(:,:,iProc),nTauW_YOURS(iProc), MPI_DOUBLE_PRECISION, &
+    CALL MPI_IRECV(TauW_YOURS(:,:,iProc),2*nTauW_YOURS(iProc), MPI_DOUBLE_PRECISION, &
                     Proc_RecvTauW(iProc), 0, MPI_COMM_FLEXI, WMLES_RecvRequests(iProc),iError)
 END DO
 
@@ -944,7 +973,7 @@ IMPLICIT NONE
 INTEGER                     :: iProc
 !==================================================================================================================================
 DO iProc=1,nProcs_SendTauW
-    CALL MPI_ISEND(TauW_MINE(:,:,iProc),nTauW_MINE(iProc), MPI_DOUBLE_PRECISION, &
+    CALL MPI_ISEND(TauW_MINE(:,:,iProc),2*nTauW_MINE(iProc), MPI_DOUBLE_PRECISION, &
                     Proc_SendTauW(iProc), 0, MPI_COMM_FLEXI, WMLES_SendRequests(iProc),iError)
 END DO
 
@@ -970,7 +999,8 @@ CALL MPI_Waitall(nProcs_RecvTauW,WMLES_RecvRequests,MPI_STATUSES_IGNORE,iError)
 
 ! In addition to guaranteeing the receive operations so that TauW_YOURS is populated,
 ! we check if there is any tau_w point where the MPI rank that calculates is the same
-! as the rank responsible for BC imposition (i.e. nTauW_MINE(0) .NE. 0)
+! as the rank responsible for BC imposition (i.e. nTauW_MINE(0) .NE. 0), and hence 
+! no comm. is needed, since the info is local to this MPI rank.
 
 IF (nTauW_MINE(0).NE.0) THEN
     DO i=1,nTauW_MINE(0)
