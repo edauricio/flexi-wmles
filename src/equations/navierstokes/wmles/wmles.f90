@@ -514,11 +514,11 @@ DO i=0,nProcs_SendTauW
     IF (i.NE.0) THEN 
         CALL MPI_RECV(PointInfo,7*nTauW_MINE(i),MPI_DOUBLE_PRECISION,Proc_SendTauW(i),1,MPI_COMM_FLEXI,iStat,iError)
     ELSE
-        IF (nTauW_MINE(0).NE.0) PointInfo = OthersPointInfo(:,1:WallStressCount_local(myRank),myRank)
+        IF (nTauW_MINE(0).NE.0) PointInfo(:,1:WallStressCount_local(myRank)) = OthersPointInfo(:,1:WallStressCount_local(myRank),myRank)
     END IF
 
     ! Store wall-tangent vector
-    IF (nTauW_MINE(i).NE.0) TauW_MINE_TangVec(1:3,:,i) = PointInfo(4:6,:)
+    IF (nTauW_MINE(i).NE.0) TauW_MINE_TangVec(1:3,1:nTauW_MINE(i),i) = PointInfo(4:6,1:nTauW_MINE(i))
     
     DO j=1,nTauW_MINE(i)
 
@@ -649,6 +649,7 @@ IF (Logging) FLUSH(UNIT_logOut)
 ! we make sure that all non-blocking Send operations are completed (i.e. the send buffer may be modified)
 CALL MPI_Waitall(nProcessors,CalcInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
 CALL MPI_Waitall(nProcessors,PointInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
+!CALL MPI_Barrier(MPI_COMM_FLEXI,iError)
 
 SDEALLOCATE(TauW_MINE_IsFace)
 SDEALLOCATE(TauW_MINE_IsInterior)
