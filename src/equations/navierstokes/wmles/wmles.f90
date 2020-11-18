@@ -100,11 +100,9 @@ INTEGER                         :: nPoints_MINE_tmp2(0:nProcessors-1), Proc_Recv
 
 LOGICAL, ALLOCATABLE            :: TauW_MINE_IsFace(:,:), TauW_MINE_IsInterior(:,:), TauW_MINE_IsInterpolation(:,:)
 
-INTEGER                         :: sendRequest
-
 #if USE_MPI
 INTEGER, ALLOCATABLE            :: OthersSideInfo(:,:), OthersElemInfo(:)
-INTEGER                         :: iStat(MPI_STATUS_SIZE)
+INTEGER                         :: iStat(MPI_STATUS_SIZE), CalcInfoRequests(0:nProcessors-1), PointInfoRequests(0:nProcessors-1)
 INTEGER                         :: hwmRank
 #endif
 !==================================================================================================================================
@@ -203,7 +201,7 @@ DO iSide=1,nBCSides
                 IF (.NOT. (hwmRank.EQ.myRank)) THEN
                     ! Read the correct portion of mesh file
                     ! CALL ReadArray('ElemInfo',2,(/6,(LastElemInd-FirstElemInd+1)/),offsetElemMPI(hwmRank),2,IntArray=OthersElemInfo)
-                    CALL ReadArray('ElemInfo',1,(/6/),Glob_hwmElemID-1,1,IntArray=OthersElemInfo)
+                    CALL ReadArray('ElemInfo',2,(/6,1/),Glob_hwmElemID-1,2,IntArray=OthersElemInfo)
                 ELSE
                     ! Use the ElemInfo already in memory from mesh read-in
                     ! OthersElemInfo = ElemInfo
@@ -358,7 +356,7 @@ DO iSide=1,nBCSides
             END DO ! do while
 
             ! Found h_wm element for this p,q face point
-            LOGWRITE(*,'(2(I4,2X),(I15,2X))') p, q, Glob_hwmElemID
+            LOGWRITE(*,'(2(I4,2X),(I15,2X))') p, q, Glob_hwmElemID, ELEMIPROC(Glob_hwmElemID)
 
             hwmRank = ELEMIPROC(Glob_hwmElemID)
             WallStressCount_local(hwmRank) = WallStressCount_local(hwmRank) + 1
@@ -381,6 +379,8 @@ DO iSide=1,nBCSides
             OthersPointInfo(7,WallStressCount_local(hwmRank),hwmRank) = Glob_hwmElemID
 
         END DO; END DO ! p, q
+
+        CALL CloseDataFile()
     END IF ! 
 END DO
 SDEALLOCATE(OthersSideInfo)
@@ -408,6 +408,8 @@ CALL MPI_BCAST(WallStressCount, nProcessors, MPI_INTEGER, 0, MPI_COMM_FLEXI, iEr
 #endif
 
 !> Mount data and send it to other procs (non-blocking)
+CalcInfoRequests = MPI_REQUEST_NULL
+PointInfoRequests = MPI_REQUEST_NULL
 nProcs_RecvTauW = 0
 IF (nWMLESSides .NE. 0) THEN
     ALLOCATE(Proc_RecvTauW_Inv(0:nProcessors-1))
@@ -423,11 +425,11 @@ IF (nWMLESSides .NE. 0) THEN
             ! containing your rank and how many points they will calculate for you (tag: 0)
             nPoints_YOUR_tmp(1) = myRank
             nPoints_YOUR_tmp(2) = WallStressCount_local(i)
-            CALL MPI_ISEND(nPoints_YOUR_tmp,2,MPI_INTEGER,i,0,MPI_COMM_FLEXI,sendRequest,iError)
-            CALL MPI_Request_Free(sendRequest, iError)
+            CALL MPI_ISEND(nPoints_YOUR_tmp,2,MPI_INTEGER,i,0,MPI_COMM_FLEXI,CalcInfoRequests(i),iError)
+            !CALL MPI_Request_Free(sendRequest, iError)
             ! Then, send the message itself (tag: 1)
-            CALL MPI_ISEND(OthersPointInfo(:,:,i),7*WallStressCount_local(i),MPI_DOUBLE_PRECISION,i,1,MPI_COMM_FLEXI,sendRequest,iError)
-            CALL MPI_Request_Free(sendRequest, iError)
+            CALL MPI_ISEND(OthersPointInfo(:,:,i),7*WallStressCount_local(i),MPI_DOUBLE_PRECISION,i,1,MPI_COMM_FLEXI,PointInfoRequests(i),iError)
+            !CALL MPI_Request_Free(sendRequest, iError)
         END IF
     END DO
 END IF
@@ -643,10 +645,16 @@ LOGWRITE(*,*) '---------------------------------------'
 LOGWRITE(*,*) "====================== END WMLES Info ===================="
 IF (Logging) FLUSH(UNIT_logOut)
 
+! Before allowing an MPI proc. to leave this subroutine (and thus possibly clean sending buffers/variables)
+! we make sure that all non-blocking Send operations are completed (i.e. the send buffer may be modified)
+CALL MPI_Waitall(nProcessors,CalcInfoRequests,MPI_STATUSES_IGNORE,iError)
+CALL MPI_Waitall(nProcessors,PointInfoRequests,MPI_STATUSES_IGNORE,iError)
+
 SDEALLOCATE(TauW_MINE_IsFace)
 SDEALLOCATE(TauW_MINE_IsInterior)
 SDEALLOCATE(TauW_MINE_IsInterpolation)
-
+SDEALLOCATE(OthersPointInfo)
+SDEALLOCATE(PointInfo)
 
 !!!>> IMPORTANT INFO:
 ! During the calculation (ComputeWallStress), each proc will run a loop from
@@ -657,7 +665,6 @@ SDEALLOCATE(TauW_MINE_IsInterpolation)
 ! Then, proc 'i' receives this info and maps it to the actual WMLES array TauW(1:2,p,q,nWMLESSide)
 ! using the info on TauW_Proc array, which contains info on p, q, and WMLES Side, and the MPI proc.
 ! responsible for calculating wall stress for this point.
-
 WMLESInitDone=.TRUE.
 SWRITE(UNIT_stdOut,'(A)')' INIT Wall-Modeled LES DONE!'
 SWRITE(UNIT_StdOut,'(132("-"))')
