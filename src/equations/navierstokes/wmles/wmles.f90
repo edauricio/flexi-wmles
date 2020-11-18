@@ -647,8 +647,8 @@ IF (Logging) FLUSH(UNIT_logOut)
 
 ! Before allowing an MPI proc. to leave this subroutine (and thus possibly clean sending buffers/variables)
 ! we make sure that all non-blocking Send operations are completed (i.e. the send buffer may be modified)
-CALL MPI_Waitall(nProcessors,CalcInfoRequests,MPI_STATUSES_IGNORE,iError)
-CALL MPI_Waitall(nProcessors,PointInfoRequests,MPI_STATUSES_IGNORE,iError)
+CALL MPI_Waitall(nProcessors,CalcInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
+CALL MPI_Waitall(nProcessors,PointInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
 
 SDEALLOCATE(TauW_MINE_IsFace)
 SDEALLOCATE(TauW_MINE_IsInterior)
