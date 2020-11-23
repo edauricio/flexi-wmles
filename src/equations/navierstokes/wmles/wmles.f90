@@ -66,8 +66,9 @@ USE MOD_Globals
 USE MOD_PreProc
 USE MOD_HDF5_Input
 USE MOD_WMLES_Vars
-USE MOD_Interpolation_Vars      ,ONLY: InterpolationInitIsDone
 USE MOD_Mesh_Vars              ! ,ONLY: nBCSides, BC, BoundaryType, MeshInitIsDone, ElemToSide, SideToElem, SideToGlobalSide
+USE MOD_Interpolation_Vars      ,ONLY: InterpolationInitIsDone,xGP,wBary
+USE MOD_Basis                   ,ONLY: LagrangeInterpolationPolys
 USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL
 USE MOD_StringTools             ,ONLY: STRICMP
 USE MOD_Testcase_Vars           ,ONLY: Testcase
@@ -130,6 +131,7 @@ IF (H_WM .LE. 0) &
 delta = GETREAL('delta')
 
 abs_h_wm = h_wm*delta
+NSuper = 3*PP_N
 
 ! =-=-=-=--=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ! We now set up the h_wm locations, determine in which element they lie,
@@ -483,6 +485,7 @@ DEALLOCATE(TauW_Proc_tmp)
 ALLOCATE(PointInfo(7,MAXVAL(nTauW_MINE)))
 ALLOCATE(TauW_MINE_FacePoint(3,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
 ALLOCATE(TauW_MINE_InteriorPoint(4,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
+ALLOCATE(TauW_MINE_Interpolate(4,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
 ALLOCATE(TauW_MINE_TangVec(3,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
 
 IF (Logging) THEN ! Logging info only
@@ -585,22 +588,36 @@ DO i=0,nProcs_SendTauW
         ! If the point may not be approximated neither by a face nor an interior point,
         ! then we must interpolate.
         IF (.NOT.FoundhwmPoint) THEN ! Interpolate
-            WRITE(*,*) myRank, 'INTERPOLATION POINT', LocSide, Distance, WMLES_Tol, Loc_hwmElemID, SideID, OppSideID
             IF (Logging) TauW_MINE_IsInterpolation(j,i) = .TRUE.
             nTauW_MINE_Interpolate(i) = nTauW_MINE_Interpolate(i) + 1
             InterpToLocalPoint(nTauW_MINE_Interpolate(i)) = j
-            ! TODO
-            ! Set up the interpolation info
-            ! - Use mappings to map h_wm coords to local coords and save this info
-
+            !> Map h_wm coords from physical to local (standard) coords and save this info
+            CALL PhysToStdCoords(PointInfo(1:3,j),Loc_hwmElemID,TauW_MINE_Interpolate(1:3,nTauW_MINE_Interpolate(i),i))
+            TauW_MINE_Interpolate(4,nTauW_MINE_Interpolate(i),i) = Loc_hwmElemID
         END IF
-    END DO ! j -- each point that we must calculate tau_w, for this MPI process
+    END DO ! j -- each point that we must calculate tau_w, for this MPI process i
 
     ! Sanity check
     IF ((nTauW_MINE_FacePoint(i)+nTauW_MINE_Interpolate(i)+nTauW_MINE_InteriorPoint(i)) &
                 .NE. nTauW_MINE(i)) CALL Abort(__STAMP__,"Dangling points?")
 
 END DO ! i -- message from each process having a BC side which needs our calculation of tau_w
+
+! Check if there are interpolation points to calculate in this MPI proc., so that we set up
+! and store the Lagrange polynomials calculate at each point
+IF (MAXVAL(nTauW_MINE_Interpolate).GT.0) THEN 
+    ! Set up the Lagrangian interpolating polynomials for each interp. node.
+    ALLOCATE(Lag_xi(0:PP_N,MAXVAL(nTauW_MINE_Interpolate),0:nProcs_SendTauW))
+    ALLOCATE(Lag_eta(0:PP_N,MAXVAL(nTauW_MINE_Interpolate),0:nProcs_SendTauW))
+    ALLOCATE(Lag_zeta(0:PP_N,MAXVAL(nTauW_MINE_Interpolate),0:nProcs_SendTauW))
+    DO i=0,nProcs_SendTauW
+        DO j=1,nTauW_MINE_Interpolate(i)
+            CALL LagrangeInterpolationPolys(TauW_MINE_Interpolate(1,j,i),PP_N,xGP,wBary,Lag_xi(:,j,i))
+            CALL LagrangeInterpolationPolys(TauW_MINE_Interpolate(2,j,i),PP_N,xGP,wBary,Lag_eta(:,j,i))
+            CALL LagrangeInterpolationPolys(TauW_MINE_Interpolate(3,j,i),PP_N,xGP,wBary,Lag_zeta(:,j,i))
+        END DO
+    END DO
+END IF
 
 !> Set up variables for MPI and actual TauW values 
 ! IF (nWMLESSides .NE. 0) ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
@@ -649,7 +666,6 @@ IF (Logging) FLUSH(UNIT_logOut)
 ! we make sure that all non-blocking Send operations are completed (i.e. the send buffer may be modified)
 CALL MPI_Waitall(nProcessors,CalcInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
 CALL MPI_Waitall(nProcessors,PointInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
-!CALL MPI_Barrier(MPI_COMM_FLEXI,iError)
 
 SDEALLOCATE(TauW_MINE_IsFace)
 SDEALLOCATE(TauW_MINE_IsInterior)
@@ -666,6 +682,8 @@ SDEALLOCATE(PointInfo)
 ! Then, proc 'i' receives this info and maps it to the actual WMLES array TauW(1:2,p,q,nWMLESSide)
 ! using the info on TauW_Proc array, which contains info on p, q, and WMLES Side, and the MPI proc.
 ! responsible for calculating wall stress for this point.
+
+
 WMLESInitDone=.TRUE.
 SWRITE(UNIT_stdOut,'(A)')' INIT Wall-Modeled LES DONE!'
 SWRITE(UNIT_StdOut,'(132("-"))')
@@ -712,6 +730,8 @@ END SELECT
 
 END SUBROUTINE
 
+
+
 !==================================================================================================================================
 !> Get the ID of element where the exchange location point, h_wm (p,q), lies.
 !==================================================================================================================================
@@ -752,8 +772,9 @@ IMPLICIT NONE
 ! LOCAL VARIABLES
 INTEGER                             :: iSide, sProc, FPInd, IPInd, IntPInd
 INTEGER                             :: p,q,r,SideID,ElemID
-REAL                             :: u_tau, u_mean, utang
-REAL, PARAMETER                  :: vKarman=0.41, B=5.5
+REAL                                :: u_tau, u_mean, utang
+REAL                                :: vel_inst(3), rho_inst
+REAL, PARAMETER                     :: vKarman=0.41, B=5.5
 !==================================================================================================================================
 IF (.NOT.WMLESInitDone) THEN
     CALL CollectiveStop(__STAMP__,&
@@ -798,18 +819,30 @@ SELECT CASE(WallModel)
             r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
             ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
 
-            utang = DOT_PRODUCT(U(2:4,p,q,r,ElemID),TauW_MINE_TangVec(:,InteriorToLocalPoint(IPInd),sProc))
+            ! TODO:
+            ! U is the CONS vector. We need to take PRIMS here.
+            utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_TangVec(:,InteriorToLocalPoint(IPInd),sProc))
             ! utang = U(2,p,q,r,ElemID)
 
             u_tau = SQRT(1.0/U(1,p,q,r,ElemID)) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
             TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
-            TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = (2.0*mu0)*(U(3,p,q,r,ElemID)/abs_h_wm)
+            TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = (2.0*mu0)*(UPrim(3,p,q,r,ElemID)/abs_h_wm)
         END DO
 
         ! Calculate tau_w for each h_wm that must be interpolated
         DO IntPInd=1,nTauW_MINE_Interpolate(sProc)
+            ElemID = INT(TauW_MINE_Interpolate(4,IntPInd,sProc))
+            vel_inst(1) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),2,prim=.TRUE.)
+            vel_inst(2) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),3,prim=.TRUE.)
+            vel_inst(3) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),4,prim=.TRUE.)
+            rho_inst = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),1)
 
+            utang = DOT_PRODUCT(vel_inst(:),TauW_MINE_TangVec(:,InterpToLocalPoint(IntPInd),sProc))
+            u_tau = SQRT(1.0/rho_inst) 
+            u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
+            TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
+            TauW_MINE(2,InterpToLocalPoint(IntPInd),sProc) = (2.0*mu0)*(vel_inst(2)/abs_h_wm)
         END DO
     END DO
 
@@ -939,6 +972,401 @@ END DO; END DO ! p,q
 LOGWRITE(*,'(X)')
 
 END SUBROUTINE EvalDiffFlux3D_WMLES
+
+!===================================================================================================================================
+!> Computes parametric coordinates of exchange location point (h_wm), given the physical coordinates, iteratively.
+!> This is a copy/paste version of GetParametricCoordinates from posti/recordpoints, modified to use only the parts we need.
+!===================================================================================================================================
+SUBROUTINE PhysToStdCoords(hwmPhys,iElem,hwmStd)
+! MODULES
+USE MOD_Preproc
+USE MOD_Globals
+USE MOD_Mathtools,         ONLY: INVERSE
+USE MOD_Mesh_Vars,         ONLY: NGeo,Elem_xGP,SideToElem,nBCSides,Face_xGP,NormVec
+USE MOD_Basis,             ONLY: LagrangeInterpolationPolys,ChebyGaussLobNodesAndWeights,BarycentricWeights
+USE MOD_Basis,             ONLY: PolynomialDerivativeMatrix
+USE MOD_Interpolation,     ONLY: GetVandermonde,GetNodesAndWeights,GetDerivativeMatrix
+USE MOD_Interpolation_Vars
+USE MOD_ChangeBasis,       ONLY: ChangeBasis3D,ChangeBasis2D
+USE MOD_WMLES_Vars
+IMPLICIT NONE
+!-----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+REAL, INTENT(IN)            :: hwmPhys(3)
+INTEGER, INTENT(IN)         :: iElem
+REAL, INTENT(OUT)           :: hwmStd(3)
+!----------------------------------------------------------------------------------------------------------------------------------
+REAL                  :: DCL_NGeo(0:Ngeo,0:Ngeo)
+REAL                  :: XCL_Ngeo(3,0:Ngeo,0:Ngeo,0:Ngeo)          !< mapping X(xi) P\in Ngeo
+REAL                  :: hmax2
+REAL                  :: X_NSuper(1:3,0:NSuper,0:NSuper,0:NSuper)
+REAL                  :: Winner_Dist2,Dist2
+REAL                  :: dXCL_NGeo(1:3,1:3,0:NGeo,0:NGeo,0:NGeo)
+REAL                  :: Xi_CLNGeo(0:NGeo),wBary_CLNGeo(0:NGeo)
+REAL                  :: Xi_NSuper(0:NSuper)
+REAL                  :: xC(3)
+REAL                  :: Vdm_N_CLNGeo(0:NGeo,0:PP_N)
+REAL                  :: Vdm_CLNGeo_EquiNSuper(0:NSuper,0:NGeo)
+REAL                  :: Lag(1:3,0:NGeo)
+REAL                  :: F(1:3),eps_F,Xi(1:3),Jac(1:3,1:3),sJac(1:3,1:3)
+INTEGER               :: i,j,k,l,nNodes
+INTEGER               :: NewtonIter
+CHARACTER(LEN=255)    :: NodeType_Super
+LOGICAL               :: changeBasisDone,calcJacobianDone
+LOGICAL               :: hwmFound
+REAL, PARAMETER       :: maxTol = 1.+1.E-3 ! This souldn't be too restricting
+! boundary projection
+INTEGER               :: SideID,locSideID,iWinner,jWinner
+REAL                  :: dist2RP
+REAL                  :: Vdm_N_EquiNSuper(0:NSuper,0:PP_N),xBC_NSuper(3,0:NSuper,0:NSuper)
+REAL                  :: NormVec_NSuper(3,0:NSuper,0:NSuper)
+!newton method
+REAL                  :: wBary_NSuper(0:NSuper), D_NSuper(0:NSuper,0:NSuper), Lag_NSuper(1:2,0:NSuper)
+REAL                  :: dxBC_NSuper(3,2,0:NSuper,0:NSuper)
+REAL                  :: Gmat(2,0:NSuper,0:NSuper),dGmat(2,2,0:NSuper,0:NSuper)
+REAL                  :: G(2),Xi2(2),Jac2(2,2),sJac2(2,2),xWinner(3),NormVecWinner(3)
+!===================================================================================================================================
+! Prepare CL basis evaluation
+CALL GetNodesAndWeights( NGeo, NodeTypeCL, Xi_CLNGeo,wIPBary=wBary_CLNGeo)
+CALL GetDerivativeMatrix(Ngeo, NodeTypeCL, DCL_Ngeo)
+
+! Set NSuper to three times the current polynomial degree
+DO i=0,NSuper
+  Xi_NSuper(i) = 2./REAL(NSuper) * REAL(i) - 1.
+END DO
+
+NodeType_Super='VISU'
+CALL GetVanderMonde(PP_N,NodeType  ,NGeo  ,NodeTypeCL    ,Vdm_N_CLNGeo)
+CALL GetVanderMonde(NGeo,NodeTypeCL,NSuper,NodeType_Super,Vdm_CLNGeo_EquiNSuper)
+! Define maximum mesh size (square) hmax2
+nNodes=(NGeo+1)**3
+
+hwmFound=.FALSE.
+hwmStd = HUGE(9.) ! First std coords "estimate"
+
+! We have the Elem_xGP on N, compute XCL_NGeo for minimal changes
+CALL ChangeBasis3D(3,PP_N,NGeo,Vdm_N_CLNGeo,Elem_xGP(:,:,:,:,iElem),XCL_NGeo)
+
+changeBasisDone=.FALSE.
+calcJacobianDone=.FALSE.
+
+
+! Find initial guess for Newton, get supersampled element for first recordpoint
+IF(.NOT.changeBasisDone) &
+CALL ChangeBasis3D(3,NGeo,NSuper,Vdm_CLNGeo_EquiNSuper,XCL_NGeo,X_NSuper)
+changeBasisDone=.TRUE.
+
+Winner_Dist2=HUGE(1.)
+DO i=0,NSuper; DO j=0,NSuper; DO k=0,NSuper
+  Dist2=SUM((hwmPhys-X_NSuper(:,i,j,k))*(hwmPhys-X_NSuper(:,i,j,k)))
+  IF (Dist2.LT.Winner_Dist2) THEN
+    Winner_Dist2=Dist2
+    Xi=(/Xi_NSuper(i),Xi_NSuper(j),Xi_NSuper(k)/)
+END IF
+END DO; END DO; END DO
+
+! Compute Jacobian of Winner element Mapping for each CL point
+IF(.NOT.calcJacobianDone)THEN
+  dXCL_NGeo=0.
+  DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
+    ! Matrix-vector multiplication
+    DO l=0,NGeo
+      dXCL_NGeo(:,1,i,j,k)=dXCL_NGeo(:,1,i,j,k) + DCL_NGeo(i,l)*XCL_NGeo(:,l,j,k)
+      dXCL_NGeo(:,2,i,j,k)=dXCL_NGeo(:,2,i,j,k) + DCL_NGeo(j,l)*XCL_NGeo(:,i,l,k)
+      dXCL_NGeo(:,3,i,j,k)=dXCL_NGeo(:,3,i,j,k) + DCL_NGeo(k,l)*XCL_NGeo(:,i,j,l)
+  END DO !l=0,NGeo
+END DO; END DO; END DO
+calcJacobianDone=.TRUE.
+END IF
+
+CALL LagrangeInterpolationPolys(Xi(1),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(1,:))
+CALL LagrangeInterpolationPolys(Xi(2),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(2,:))
+CALL LagrangeInterpolationPolys(Xi(3),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(3,:))
+! F(xi) = x(xi) - hwmPhys
+F=-hwmPhys
+DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
+  F=F+XCL_NGeo(:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
+END DO; END DO; END DO
+
+eps_F=1.E-10
+NewtonIter=0
+DO WHILE ((SUM(F*F).GT.eps_F).AND.(NewtonIter.LT.50))
+  NewtonIter=NewtonIter+1
+  ! Compute F Jacobian dx/dXi
+  Jac=0.
+  DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
+    Jac=Jac+dXCL_NGeo(:,:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
+END DO; END DO; END DO
+
+! Compute inverse of Jacobian
+sJac=INVERSE(Jac)
+
+! Iterate Xi using Newton step
+Xi = Xi - MATMUL(sJac,F)
+!  if Newton gets outside reference space range [-1,1], exit.
+! But allow for some oscillation in the first couple of iterations, as we may discard the correct point/element!!
+IF((NewtonIter.GT.4).AND.(ANY(ABS(Xi).GT.1.2))) EXIT
+
+! Compute function value
+CALL LagrangeInterpolationPolys(Xi(1),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(1,:))
+CALL LagrangeInterpolationPolys(Xi(2),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(2,:))
+CALL LagrangeInterpolationPolys(Xi(3),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(3,:))
+! F(xi) = x(xi) - hwmPhys
+F=-hwmPhys
+DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
+    F=F+XCL_NGeo(:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
+END DO; END DO; END DO
+END DO !newton
+
+! check if result is better then previous result
+IF(MAXVAL(ABS(Xi)).LT.MAXVAL(ABS(hwmStd))) THEN
+  IF(MAXVAL(ABS(Xi)).LE.1.) hwmFound = .TRUE. ! if point is inside element, stop searching
+  hwmStd=Xi
+  F=0.
+  DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
+    F=F+XCL_NGeo(:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
+END DO; END DO; END DO
+END IF
+
+
+
+IF(.NOT.hwmFound)THEN
+    ! mark as valid if greater than max tolerance
+    IF(MAXVAL(ABS(hwmStd)).LT.maxTol) hwmFound=.TRUE.
+END IF
+
+! Remaining points: If the point is close to a boundary, project the point on the boundary
+IF(.NOT.hwmFound) THEN
+  WRITE(*,*) myRank, '!!!!!!!!!!!!!!! WARNING !!!!!!!!!!!!!!!'
+  LOGWRITE(UNIT_logOut,'(A,I4,A)') 'h_wm for',iElem,' have not been found inside the mesh. THIS SHOULD NOT HAPPEN.'
+  LOGWRITE(UNIT_logOut,'(A)')' Attempting to project them on the closest boundary...'
+
+
+  dist2RP=HUGE(1.)
+  IF(NSuper.LT.Ngeo*2) THEN
+    LOGWRITE(UNIT_logOut,*)'Warning: NSuper<2Ngeo, derivative may be wrong.'
+END IF
+! Prepare equidistant basis
+CALL BarycentricWeights(NSuper,Xi_NSuper,wBary_NSuper)
+CALL GetVandermonde(PP_N,NodeType,NSuper,NodeType_Super,Vdm_N_EquiNSuper)
+CALL PolynomialDerivativeMatrix(NSuper,Xi_NSuper,D_NSuper)
+nNodes=(NSuper+1)**2
+DO SideID=1,nBCSides
+    calcJacobianDone=.FALSE.
+    ! Supersampling of the side to equidistant grid for search
+    CALL ChangeBasis2D(3,PP_N,NSuper,Vdm_N_EquiNSuper,Face_xGP(:,:,:,0,SideID),xBC_NSuper)
+    CALL ChangeBasis2D(3,PP_N,NSuper,Vdm_N_EquiNSuper,NormVec( :,:,:,0,SideID),NormVec_NSuper)
+    ! get the BCSide centroid
+    xC(1) = SUM(xBC_NSuper(1,:,:))/nNodes
+    xC(2) = SUM(xBC_NSuper(2,:,:))/nNodes
+    xC(3) = SUM(xBC_NSuper(3,:,:))/nNodes
+    ! calculate the max. distance within the side to the centroid
+    hmax2=0.
+    DO j=0,NSuper
+      DO i=0,NSuper
+        hmax2=MAX(hmax2,SUM((xBC_NSuper(:,i,j)-xC)*(xBC_NSuper(:,i,j)-xC)))
+    END DO
+END DO
+hmax2=hmax2*1.20 ! 20% tolerance
+
+! Check if the point is close to the boundary side
+! Coarse search of possible elems
+IF(SUM((xC-hwmPhys)*((xC-hwmPhys))).GT.hmax2) CYCLE
+! Get closest point on the supersampled side as starting value
+locSideID= SideToElem(S2E_LOC_SIDE_ID,SideID)
+Winner_Dist2=HUGE(1.)
+DO i=0,NSuper; DO j=0,NSuper
+    Dist2=SUM((hwmPhys-xBC_NSuper(:,i,j))*(hwmPhys-xBC_NSuper(:,i,j)))
+    IF (Dist2.LT.Winner_Dist2) THEN
+      Winner_Dist2=Dist2
+      iWinner=i
+      jWinner=j
+  END IF
+END DO; END DO
+Xi2=(/Xi_NSuper(iWinner),Xi_NSuper(jWinner)/)
+xWinner=xBC_NSuper(:,iWinner,jWinner)
+NormVecWinner=NormVec_NSuper(:,iWinner,jWinner)
+F=hwmPhys-xWinner
+
+! Newton to find the minimum distance
+! Calculate the surface jacobian
+IF(.NOT.calcJacobianDone)THEN
+    dxBC_NSuper=0.
+    DO j=0,NSuper
+      DO i=0,NSuper
+          ! Matrix-vector multiplication
+          DO l=0,NSuper
+              dxBC_NSuper(:,1,i,j)=dxBC_NSuper(:,1,i,j) + D_NSuper(i,l)*xBC_NSuper(:,l,j)
+              dxBC_NSuper(:,2,i,j)=dxBC_NSuper(:,2,i,j) + D_NSuper(j,l)*xBC_NSuper(:,i,l)
+          END DO !l=0,NSuper
+      END DO !i=0,NSuper
+  END DO !j=0,NSuper
+  calcJacobianDone=.TRUE.
+END IF
+
+! for Newton we first need the function Gmat(:,i,j) and its gradient in parameter space
+! G= d/dXi((xBC-hwmPhys)²)=0, degree of G 2NGeo
+Gmat=0.
+DO j=0,NSuper
+    DO i=0,NSuper
+      Gmat(:,i,j)=Gmat(:,i,j)+dxBC_nSuper(1,:,i,j)*2*(xBC_NSuper(1,i,j)-hwmPhys(1)) &
+      +dxBC_nSuper(2,:,i,j)*2*(xBC_NSuper(2,i,j)-hwmPhys(2)) &
+      +dxBC_nSuper(3,:,i,j)*2*(xBC_NSuper(3,i,j)-hwmPhys(3))
+  END DO! i=0,NSuper
+END DO! j=0,NSuper
+
+dGmat=0.
+DO j=0,NSuper
+    DO i=0,NSuper
+      ! Matrix-vector multiplication
+      DO l=0,NSuper
+        dGmat(:,1,i,j)=dGmat(:,1,i,j) + D_NSuper(i,l)*Gmat(:,l,j)
+        dGmat(:,2,i,j)=dGmat(:,2,i,j) + D_NSuper(j,l)*Gmat(:,i,l)
+    END DO !l=0,NSuper
+END DO! i=0,NSuper
+END DO! j=0,NSuper
+! get initial value of the functional G
+CALL LagrangeInterpolationPolys(Xi2(1),NSuper,Xi_NSuper,wBary_NSuper,Lag_NSuper(1,:))
+CALL LagrangeInterpolationPolys(Xi2(2),NSuper,Xi_NSuper,wBary_NSuper,Lag_NSuper(2,:))
+G=0.
+DO j=0,NSuper
+    DO i=0,NSuper
+      G=G+Gmat(:,i,j)*Lag_NSuper(1,i)*Lag_NSuper(2,j)
+  END DO! i=0,NSuper
+END DO! j=0,NSuper
+eps_F=1.E-10
+NewtonIter=0
+DO WHILE ((SUM(G*G).GT.eps_F).AND.(NewtonIter.LT.50))
+    NewtonIter=NewtonIter+1
+    ! Compute G Jacobian dG/dXi
+
+    Jac2=0.
+    DO j=0,NSuper
+      DO i=0,NSuper
+        Jac2=Jac2 + dGmat(:,:,i,j)*Lag_NSuper(1,i)*Lag_NSuper(2,j)
+    END DO !l=0,NSuper
+END DO !i=0,NSuper
+
+! Compute inverse of Jacobian
+sJac2=INVERSE(Jac2)
+
+! Iterate Xi using Newton step
+Xi2 = Xi2 - MATMUL(sJac2,G)
+! if Newton gets outside reference space range [-1,1], exit.
+! But allow for some oscillation in the first couple of iterations, as we may discard the correct point/element!!
+IF((NewtonIter.GT.4).AND.(ANY(ABS(Xi2).GT.1.2))) EXIT
+
+! Compute function value
+CALL LagrangeInterpolationPolys(Xi2(1),NSuper,Xi_NSuper,wBary_NSuper,Lag_NSuper(1,:))
+CALL LagrangeInterpolationPolys(Xi2(2),NSuper,Xi_NSuper,wBary_NSuper,Lag_NSuper(2,:))
+G=0.
+DO j=0,NSuper
+   DO i=0,NSuper
+     G=G+Gmat(:,i,j)*Lag_NSuper(1,i)*Lag_NSuper(2,j)
+ END DO! i=0,NSuper
+END DO! j=0,NSuper
+END DO !newton
+
+! use Newton result if minimum is within parameter range, else see if supersampled
+! initial guess is better than previous result
+IF(MAXVAL(ABS(Xi2)).LE.1.) THEN ! use newton result
+    ! calculate new distance
+    xWinner=0.
+    NormVecWinner=0.
+    DO j=0,NSuper
+      DO i=0,NSuper
+        xWinner=xWinner+xBC_NSuper(:,i,j)*Lag_NSuper(1,i)*Lag_NSuper(2,j)
+        NormVecWinner=NormVecWinner+NormVec_NSuper(:,i,j)*Lag_NSuper(1,i)*Lag_NSuper(2,j)
+    END DO! i=0,NSuper
+END DO! j=0,NSuper
+Winner_Dist2=SUM((xWinner-hwmPhys)*(xWinner-hwmPhys))
+END IF
+
+NormVecWinner=NormVecWinner/NORM2(NormVecWinner)
+F=(hwmPhys-xWinner)/NORM2(hwmPhys-xWinner)
+IF(Winner_Dist2.LE.dist2RP)THEN
+    SELECT CASE(locSideID)
+    CASE(XI_MINUS)
+      ! switch to right hand system
+      hwmStd=(/-1.,Xi2(2),Xi2(1)/)
+  CASE(ETA_MINUS)
+      hwmStd=(/Xi2(1),-1.,Xi2(2)/)
+  CASE(ZETA_MINUS)
+      ! switch to right hand system
+      hwmStd=(/Xi2(2),Xi2(1),-1./)
+  CASE(XI_PLUS)
+      hwmStd=(/1.,Xi2(1),Xi2(2)/)
+  CASE(ETA_PLUS)
+      ! switch to right hand system
+      hwmStd=(/-Xi2(1),1.,Xi2(2)/)
+  CASE(ZETA_PLUS)
+      hwmStd=(/Xi2(1),Xi2(2),1./)
+  END SELECT
+  ! keep the RP in the not found list, find the side with the best angle and minimum distance
+  dist2RP=Winner_Dist2
+END IF
+END DO! SideID=1,nBCSides
+LOGWRITE(UNIT_logOut,'(A)')' done.'
+LOGWRITE(UNIT_logOut,'(A,F15.8)')'  Max. distance: ',SQRT(dist2RP)
+END IF!(.NOT.hwmFound)
+
+IF(.NOT.hwmFound)THEN
+    ! Only mark as invalid if greater then max tolerance
+    IF(MAXVAL(ABS(hwmStd)).GT.maxTol)THEN
+      ! h_wm has not been found
+      WRITE(*,*) 'Exchange location with Coordinates ',hwmPhys, ' is a troublemaker!'
+      CALL abort(__STAMP__, &
+         'Newton has reached 50 Iter, Point not found')
+  END IF
+END IF
+
+END SUBROUTINE PhysToStdCoords
+
+!==================================================================================================================================
+!> Evaluate solution at current time t at recordpoint positions and fill output buffer
+!==================================================================================================================================
+FUNCTION InterpolateHwm(iElem,L_xi,L_eta,L_zeta,comp,prim)
+! MODULES
+USE MOD_Globals
+USE MOD_Preproc
+USE MOD_DG_Vars
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! INPUT/OUTPUT VARIABLES
+INTEGER, INTENT(IN)            :: iElem                                      !< Mesh element containing the solution to be interpolated
+INTEGER,INTENT(IN)             :: comp                                       !< Component of the Cons/Prim vector to be interpolated
+REAL,INTENT(IN)                :: L_xi(0:PP_N),L_eta(0:PP_N),L_zeta(0:PP_NZ) !< Lagrange interpolating polynomials
+LOGICAL,INTENT(IN),OPTIONAL    :: prim                                       !< .TRUE. so that comp refers to the components of Primitive var. vector
+REAL                           :: InterpolateHwm
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER                        :: i,j,k
+LOGICAL                        :: primitive
+REAL                           :: tmpSum
+REAL                           :: L_eta_zeta
+REAL                           :: Var(0:PP_N,0:PP_N,0:PP_NZ)
+!----------------------------------------------------------------------------------------------------------------------------------
+primitive=.FALSE.
+
+IF (PRESENT(prim)) primitive=prim
+
+IF (primitive) THEN
+    Var(:,:,:) = UPrim(comp,:,:,:,iElem)
+ELSE
+    Var(:,:,:) = U(comp,:,:,:,iElem)
+END IF
+
+tmpSum=0.
+DO k=0,PP_NZ; DO j=0,PP_N
+  L_eta_zeta=L_eta(j)*L_zeta(k)
+  DO i=0,PP_N
+    tmpSum=tmpSum + Var(i,j,k)*L_xi(i)*L_eta_zeta
+  END DO !i
+END DO; END DO !k
+
+InterpolateHwm = tmpSum
+
+END FUNCTION InterpolateHwm
 
 !==================================================================================================================================
 !> Subroutine that controls the receive operations for the Tau_W to be exchanged between processors.

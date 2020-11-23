@@ -3,6 +3,9 @@
 	[
 		{
 			"path": "."
+		},
+		{
+			"path": "/home/eron/Workspace/CFD/Flexi/flexi/posti"
 		}
 	]
 }

@@ -33,6 +33,7 @@ INTEGER, PARAMETER :: WMLES_EQTBLE = 5
 INTEGER                     :: WallModel ! Integer corresponding to the WallModel
 REAL                        :: h_wm, abs_h_wm
 REAL                        :: delta
+INTEGER                     :: NSuper ! Parameter to find h_wm in standard coordinates, when interpolation is needed.
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
                                                    ! Second and third indices: indices "i,j" of the BC face
@@ -90,16 +91,25 @@ INTEGER, ALLOCATABLE        :: FaceToLocalPoint(:), InteriorToLocalPoint(:), Int
                                                                                                    ! calculate tau_w for
 
 INTEGER, ALLOCATABLE        :: TauW_MINE_FacePoint(:,:,:) ! If h_wm may be approximated as a face point, then this array stores
-                                                              ! mapping from the local tau_w point with respect each MPI proc. to p,q and SideID
+                                                              ! mapping from the local tau_w point with respect to each MPI proc. to its p,q and SideID
                                                               ! First index: 1-3 (/p,q,SideID/)
                                                               ! Second index: Local Tau_W calc point (with respect to each MPI proc. responsible for imposition)
                                                               ! Third index: MPI proc. to send info
 
 INTEGER, ALLOCATABLE        :: TauW_MINE_InteriorPoint(:,:,:) ! If h_wm may be approximated as an interior element point, then this array stores
-                                                              ! mapping from the local tau_w point with respect each MPI proc. to p,q,r and ElemID
+                                                              ! mapping from the local tau_w point with respect to each MPI proc. to its p,q,r and ElemID
                                                               ! First index: 1-4 (/p,q,r,ElemID/)
                                                               ! Second index: Local Tau_W calc point (with respect to each MPI proc. responsible for imposition)
                                                               ! Third index: MPI proc. to send info
+REAL, ALLOCATABLE           :: TauW_MINE_Interpolate(:,:,:) ! h_wm coords in standard region for solution interpolation
+                                                            ! First index: 1-3 (/xi,eta,zeta/) [-1,1]^3
+                                                            ! Second index: Local Tau_W calc point (with respect to each MPI proc. responsible for imposition)
+                                                            ! Third index: MPI proc. to send info
+REAL, ALLOCATABLE           :: Lag_xi(:,:,:), Lag_eta(:,:,:), Lag_zeta(:,:,:) ! Pre-calculated Lagrangian polynomials to interpolate each h_wm point that cannot
+                                                                              ! be approximated as a face or interior node.
+                                                                              ! First index: 0-PP_N for each \ell_i, i \in [0,PP_N]
+                                                                              ! Second index: Local Tau_W calc point (with respect to each MPI proc. responsible for imposition)
+                                                                              ! Third index: MPI proc. to send info
 
 INTEGER, ALLOCATABLE        :: WMLES_RecvRequests(:), WMLES_SendRequests(:) ! Requests for the non-blocking send/receive operations
 
