@@ -46,14 +46,19 @@ USE MOD_ReadInTools             ,ONLY: prms, addStrListEntry
 IMPLICIT NONE
 !==================================================================================================================================
 CALL prms%SetSection("Wall-Modeled LES")
-CALL prms%CreateIntFromStringOption('WMLES', "Wall model to be used on walls defined with approximate boundary conditions")
-CALL addStrListEntry('WMLES', 'Schumann', WMLES_SCHUMANN)
-CALL addStrListEntry('WMLES', 'WernerWangle', WMLES_WERNERWANGLE)
-CALL addStrListEntry('WMLES', 'EquilibriumTBLE', WMLES_EQTBLE)
+CALL prms%CreateIntFromStringOption('WallModel', "Wall model to be used on walls defined with approximate boundary conditions")
+CALL addStrListEntry('WallModel', 'Schumann', WMLES_SCHUMANN)
+CALL addStrListEntry('WallModel', 'LogLaw', WMLES_LOGLAW)
+CALL addStrListEntry('WallModel', 'WernerWangle', WMLES_WERNERWANGLE)
+CALL addStrListEntry('WallModel', 'Reichardt', WMLES_REICHARDT)
+CALL addStrListEntry('WallModel', 'Spalding', WMLES_SPALDING)
+CALL addStrListEntry('WallModel', 'EquilibriumTBLE', WMLES_EQTBLE)
 
 CALL prms%CreateRealOption('h_wm', "Distance from the wall at which LES and Wall Model "// &
                                     "exchange instantaneous flow information", "0.2")
 CALL prms%CreateRealOption('delta', "Estimated Boundary Layer Thickness")
+CALL prms%CreateRealOption('vKarman', "von Karman constant", "0.41")
+CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.5")
 
 END SUBROUTINE DefineParametersWMLES
 
@@ -114,7 +119,7 @@ END IF
 SWRITE(UNIT_StdOut,'(132("-"))')
 SWRITE(UNIT_stdOut,'(A)') ' INIT Wall-Modeled LES...'
 
-WallModel = GETINTFROMSTR('WMLES')
+WallModel = GETINTFROMSTR('WallModel')
 
 ! If Schumann's model is selected, check if we are in a channel flow
 IF ((WallModel .EQ. WMLES_SCHUMANN) .AND. (.NOT.STRICMP(Testcase, Channel))) THEN
@@ -122,6 +127,8 @@ IF ((WallModel .EQ. WMLES_SCHUMANN) .AND. (.NOT.STRICMP(Testcase, Channel))) THE
         "Schumann's wall model can only be applied to the Channel flow testcase.")
 END IF
 
+vKarman = GETREAL('vKarman')
+B = GETREAL('B')
 
 h_wm = GETREAL('h_wm')
 IF (H_WM .LE. 0) &
@@ -365,19 +372,8 @@ DO iSide=1,nBCSides
             TauW_Proc_tmp(1,p,q,nWMLESSides) = hwmRank
             TauW_Proc_tmp(2,p,q,nWMLESSides) = WallStressCount_local(hwmRank)
             OthersPointInfo(1:3,WallStressCount_local(hwmRank),hwmRank) = h_wm_Coords
-
-            ! TODO:
-            ! The normal and tangent vectors are oriented in outward-facing coordinates
-            ! with the tangent vector in z pointing to z+. Hence, for a lower wall, the 
-            ! tangent vector in the x direction is poiting to x-, so we need the "-" sign.
-            ! However, for upper walls, for example, the tangent vector in x direction will 
-            ! be pointing to x+, so we do not need the "-" sign.
-            ! Thus, a "check" must be implemented here so that we pass the tang. vec. pointing
-            ! to the correct direction, that is, streamwise.
-
-            ! One solution would be to take the dot product of this vector and the initial
-            ! velocity so that we know if it is streamwise or not, and change sign accordingly.
-            OthersPointInfo(4:6,WallStressCount_local(hwmRank),hwmRank) = -TangVec2(:,p,q,0,iSide)
+            ! Inward normal vector (hence the minus sign)
+            OthersPointInfo(4:6,WallStressCount_local(hwmRank),hwmRank) = -NormVec(:,p,q,0,iSide)
             OthersPointInfo(7,WallStressCount_local(hwmRank),hwmRank) = Glob_hwmElemID
 
         END DO; END DO ! p, q
@@ -486,7 +482,7 @@ ALLOCATE(PointInfo(7,MAXVAL(nTauW_MINE)))
 ALLOCATE(TauW_MINE_FacePoint(3,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
 ALLOCATE(TauW_MINE_InteriorPoint(4,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
 ALLOCATE(TauW_MINE_Interpolate(4,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(TauW_MINE_TangVec(3,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
+ALLOCATE(TauW_MINE_NormVec(3,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
 
 IF (Logging) THEN ! Logging info only
 ALLOCATE(TauW_MINE_IsFace(MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
@@ -520,8 +516,8 @@ DO i=0,nProcs_SendTauW
         IF (nTauW_MINE(0).NE.0) PointInfo(:,1:WallStressCount_local(myRank)) = OthersPointInfo(:,1:WallStressCount_local(myRank),myRank)
     END IF
 
-    ! Store wall-tangent vector
-    IF (nTauW_MINE(i).NE.0) TauW_MINE_TangVec(1:3,1:nTauW_MINE(i),i) = PointInfo(4:6,1:nTauW_MINE(i))
+    ! Store wall-normal vector
+    IF (nTauW_MINE(i).NE.0) TauW_MINE_NormVec(1:3,1:nTauW_MINE(i),i) = PointInfo(4:6,1:nTauW_MINE(i))
     
     DO j=1,nTauW_MINE(i)
 
@@ -771,10 +767,9 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 INTEGER                             :: iSide, sProc, FPInd, IPInd, IntPInd
-INTEGER                             :: p,q,r,SideID,ElemID
-REAL                                :: u_tau, u_mean, utang
-REAL                                :: vel_inst(3), rho_inst
-REAL, PARAMETER                     :: vKarman=0.41, B=5.5
+INTEGER                             :: p,q,r,i,SideID,ElemID
+REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag
+REAL                                :: vel_inst(3), rho_inst, tangvec(3), tau_w_vec(3)
 !==================================================================================================================================
 IF (.NOT.WMLESInitDone) THEN
     CALL CollectiveStop(__STAMP__,&
@@ -784,6 +779,15 @@ END IF
 ! Start non-blockingly receiving WMLES info (for those who have anything to receive)
 CALL StartReceiveTauWMPI()
 
+! TODO ?
+! For algebraic models (except for Schumann), the outcome is really u_tau instead of tau_w directly
+! Hence, to compute tau_w, we take tau_w = u_tau^2 * rho. However, this rho should be 
+! the density AT THE WALL, and we are currently assuming the density at the exchange location, h_wm,
+! which is conceptually wrong for a compressible flow.
+! Thus, maybe we should send u_tau instead of tau_w to the MPI proc. responsible for BC imposition,
+! and then this MPI proc. computes tau_w.
+! (See Bocquet, Sagaut & Jouhaud).
+
 ! Compute tau_w for points of our responsibility
 SELECT CASE(WallModel)
 
@@ -791,8 +795,9 @@ SELECT CASE(WallModel)
     
     ! Schumann model
     ! Computation is done using instantaneous information, projected onto the wall-tangent direction
-    
+    ! Mean wall shear stress is an INPUT to this model ! Therefore, only works for periodic channel flows.
     ! The channel flow testcase assumes <tau_w> = 1.0
+    ! u_tau is used in the log-law eq. to extract <u> (u_mean), which is then used to calculate tau_w
 
     DO sProc=0,nProcs_SendTauW
         ! Calculate tau_w for each h_wm that is approximated as a face node
@@ -803,8 +808,8 @@ SELECT CASE(WallModel)
 
             ! Face_xGP is only populated for master sides, so that only master sides have approximation nodes (check InitWMLES above)
             ! hence, use of UPrim_master is guaranteed to be correct here
-            utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_TangVec(:,FaceToLocalPoint(FPInd),sProc))
-            ! utang = UPrim_master(2,p,q,SideID)
+            !utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd),sProc))
+            utang = UPrim_master(2,p,q,SideID)
 
             u_tau = SQRT(1.0/UPrim_master(1,p,q,SideID)) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
@@ -819,12 +824,10 @@ SELECT CASE(WallModel)
             r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
             ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
 
-            ! TODO:
-            ! U is the CONS vector. We need to take PRIMS here.
-            utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_TangVec(:,InteriorToLocalPoint(IPInd),sProc))
-            ! utang = U(2,p,q,r,ElemID)
+            !utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc))
+            utang = UPrim(2,p,q,r,ElemID)
 
-            u_tau = SQRT(1.0/U(1,p,q,r,ElemID)) 
+            u_tau = SQRT(1.0/UPrim(1,p,q,r,ElemID)) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
             TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
             TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = (2.0*mu0)*(UPrim(3,p,q,r,ElemID)/abs_h_wm)
@@ -838,7 +841,9 @@ SELECT CASE(WallModel)
             vel_inst(3) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),4,prim=.TRUE.)
             rho_inst = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),1)
 
-            utang = DOT_PRODUCT(vel_inst(:),TauW_MINE_TangVec(:,InterpToLocalPoint(IntPInd),sProc))
+            !utang = DOT_PRODUCT(vel_inst(:),TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc))
+            utang = vel_inst(1)
+            
             u_tau = SQRT(1.0/rho_inst) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
             TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
@@ -846,50 +851,117 @@ SELECT CASE(WallModel)
         END DO
     END DO
 
+  CASE (WMLES_LOGLAW)
 
-    ! Send computed tau_w for processess responsible for the BC imposition on such points
+    ! In this case, it is assumed that the log-law is an instantaneous relation
+    ! Then, u (projected onto the wall-tangent streamwise direction) is used in the log-law
+    ! and u_tau is computed (using Newton iterations).
+    ! Then, u_tau is used to compute wall shear stresses.
 
+    DO sProc=0,nProcs_SendTauW
+        ! Calculate tau_w for each h_wm that is approximated as a face node
+        DO FPInd=1,nTauW_MINE_FacePoint(sProc)
+            p = TauW_MINE_FacePoint(1,FPInd,sProc)
+            q = TauW_MINE_FacePoint(2,FPInd,sProc)
+            SideID = TauW_MINE_FacePoint(3,FPInd,sProc)
 
-    ! Slave top sides first
-    ! LOGWRITE(*,*) '================= Wall Stress Calc ==================='
-    ! DO iSide=1,nSlaveSides
-    !   LOGWRITE(*,*) '------- Slave Side', iSide, '--------'
-    !   LOGWRITE(*,*) 'SideID', SlaveToTSide(iSide)
-    !   LOGWRITE(*,*) 'Wall SideID', WMLES_SideInv(SlaveToWMLESSide(iSide))
-    !   LOGWRITE(*,*) 'WMLES SideID', SlaveToWMLESSide(iSide)
-    !   LOGWRITE(*,'(2(A4,2X),9(A15,2X))') 'p', 'q', 'offdist', 'Prim(1)', 'u_tau', 'mu0', 'u_mean', 'Prim(2)', 'Prim(3)', 'tau_xy', 'tau_yz'
-    !   DO q=0,PP_NZ; DO p=0,PP_N
-    !     ! This is constant, we can calculate it in pre-processing stage (one more vector, 1:nWMLESSides)
-    !     offdist = ABS(Face_xGP(2,p,q,0,SlaveToTSide(iSide)) - Face_xGP(2,p,q,0, WMLES_SideInv(SlaveToWMLESSide(iSide)) ))
-    !     u_tau = SQRT(1.0/UPrim_slave(1,p,q, SlaveToTSide(iSide)) )
-    !     u_mean = u_tau*( (1./vKarman) * LOG((offdist*u_tau)/mu0) + B )
-    !     WMLES_Tauw(1,p,q, SlaveToWMLESSide(iSide) ) = (UPrim_slave(2,p,q, SlaveToTSide(iSide))/u_mean) * 1.0
-    !     WMLES_Tauw(2,p,q, SlaveToWMLESSide(iSide) ) = (2.0*mu0)*(UPrim_slave(3,p,q, SlaveToTSide(iSide))/offdist)
+            ! Face_xGP is only populated for master sides, so that only master sides have approximation nodes (check InitWMLES above)
+            ! hence, use of UPrim_master is guaranteed to be correct here
+            VelMag = 0.
+            DO i=2,4
+                VelMag = VelMag + UPrim_master(i,p,q,SideID)**2
+            END DO
+            VelMag = SQRT(VelMag)
 
-    !     LOGWRITE(*,'(2(I4,2X),9(E15.8,2X))') p, q, offdist, UPrim_slave(1,p,q, SlaveToTSide(iSide)), u_tau, mu0, u_mean, UPrim_slave(2,p,q, SlaveToTSide(iSide)), UPrim_slave(3,p,q, SlaveToTSide(iSide)), WMLES_Tauw(1,p,q,SlaveToWMLESSide(iSide)), WMLES_Tauw(2,p,q,SlaveToWMLESSide(iSide))
+            tangvec = UPrim_master(2:4,p,q,SideID) - DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd),sProc))*TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd),sProc)
+            tangvec = tangvec/VelMag
 
-    !   END DO; END DO ! p,q
-    ! END DO
-    ! ! Master top sides next
-    ! DO iSide=1,nMasterSides
-    !   LOGWRITE(*,*) '------- Master Side', iSide, '--------'
-    !   LOGWRITE(*,*) 'SideID', MasterToTSide(iSide)
-    !   LOGWRITE(*,*) 'Wall SideID', WMLES_SideInv(MasterToWMLESSide(iSide))
-    !   LOGWRITE(*,*) 'WMLES SideID', MasterToWMLESSide(iSide)
-    !   LOGWRITE(*,'(2(A4,2X),9(A15,2X))') 'p', 'q', 'offdist', 'Prim(1)', 'u_tau', 'mu0', 'u_mean', 'Prim(2)', 'Prim(3)', 'tau_xy', 'tau_yz'
-    !   DO q=0,PP_NZ; DO p=0,PP_N
-    !     offdist = ABS(Face_xGP(2,p,q,0,MasterToTSide(iSide)) - Face_xGP(2,p,q,0, WMLES_SideInv(MasterToWMLESSide(iSide)) ))
-    !     u_tau = SQRT(1.0/UPrim_master(1,p,q, MasterToTSide(iSide)) )
-    !     u_mean = u_tau*( (1./vKarman) * LOG((offdist*u_tau)/mu0) + B )
-    !     WMLES_Tauw(1,p,q, MasterToWMLESSide(iSide) ) = (UPrim_master(2,p,q, MasterToTSide(iSide))/u_mean) * 1.0
-    !     WMLES_Tauw(2,p,q, MasterToWMLESSide(iSide) ) = (2.0*mu0)*(UPrim_master(3,p,q, MasterToTSide(iSide))/offdist)
+            utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),tangvec)
 
-    !     LOGWRITE(*,'(2(I4,2X),9(E15.8,2X))') p, q, offdist, UPrim_master(1,p,q, MasterToTSide(iSide)), u_tau, mu0, u_mean, UPrim_master(2,p,q, MasterToTSide(iSide)), UPrim_master(3,p,q, MasterToTSide(iSide)), WMLES_Tauw(1,p,q,MasterToWMLESSide(iSide)), WMLES_Tauw(2,p,q,MasterToWMLESSide(iSide))
+            u_tau = NewtonLogLaw(utang,(mu0/UPrim_master(1,p,q,SideID)))
+            tau_w_mag = UPrim_master(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            tau_w_vec = tau_w_mag*tangvec
 
-    !   END DO; END DO ! p,q
-    ! END DO
-    ! LOGWRITE(*,*) '================= End of Wall Stress Calc ==================='
-    ! IF (Logging) FLUSH(UNIT_logOut)
+            ! TODO
+            ! Associated with the TODO above: should we pass u_tau or tau_w_vec to the MPI proc.
+            ! responsible for BC imposition, so that it can calculate TauW with the knowledge of 
+            ! the face-tangent vectors?
+            ! Right now, as a work-around, we assume that TauW_MINE(1) (i.e. tau_xy) = tau_w_mag
+            ! and TauW_MINE(2) = 0, which will be OK for the channel testcase, but definitely NOT OK
+            ! for any other flow that is not completely aligned with the x direction.
+            TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = tau_w_mag
+            TauW_MINE(2,FaceToLocalPoint(FPInd),sProc) = 0.
+
+        END DO
+
+        ! Calculate tau_w for each h_wm that is approximated as an interior node
+        DO IPInd=1,nTauW_MINE_InteriorPoint(sProc)
+            p = TauW_MINE_InteriorPoint(1,IPInd,sProc)
+            q = TauW_MINE_InteriorPoint(2,IPInd,sProc)
+            r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
+            ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
+
+            VelMag = 0.
+            DO i=2,4
+                VelMag = VelMag + UPrim(i,p,q,r,ElemID)**2
+            END DO
+            VelMag = SQRT(VelMag)
+
+            tangvec = UPrim(2:4,p,q,r,ElemID) - DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc))*TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc)
+            tangvec = tangvec/VelMag
+
+            utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),tangvec)
+
+            u_tau = NewtonLogLaw(utang,(mu0/UPrim(1,p,q,r,ElemID)))
+            tau_w_mag = UPrim_master(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            tau_w_vec = tau_w_mag*tangvec
+
+            ! TODO
+            ! Associated with the TODO above: should we pass u_tau or tau_w_vec to the MPI proc.
+            ! responsible for BC imposition, so that it can calculate TauW with the knowledge of 
+            ! the face-tangent vectors?
+            ! Right now, as a work-around, we assume that TauW_MINE(1) (i.e. tau_xy) = tau_w_mag
+            ! and TauW_MINE(2) = 0, which will be OK for the channel testcase, but definitely NOT OK
+            ! for any other flow that is not completely aligned with the x direction.
+            TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = tau_w_mag
+            TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = 0.
+
+        END DO
+
+        ! Calculate tau_w for each h_wm that must be interpolated
+        DO IntPInd=1,nTauW_MINE_Interpolate(sProc)
+            ElemID = INT(TauW_MINE_Interpolate(4,IntPInd,sProc))
+            vel_inst(1) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),2,prim=.TRUE.)
+            vel_inst(2) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),3,prim=.TRUE.)
+            vel_inst(3) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),4,prim=.TRUE.)
+            rho_inst = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),1)
+
+            VelMag = 0.
+            DO i=1,3
+                VelMag = VelMag + vel_inst(i)**2
+            END DO
+            VelMag = SQRT(VelMag)
+
+            tangvec = vel_inst(:) - DOT_PRODUCT(vel_inst(:),TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc))*TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc)
+            tangvec = tangvec/VelMag
+
+            utang = DOT_PRODUCT(vel_inst,tangvec)
+
+            u_tau = NewtonLogLaw(utang,(mu0/rho_inst))
+            tau_w_mag = UPrim_master(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            tau_w_vec = tau_w_mag*tangvec
+
+            ! TODO
+            ! Associated with the TODO above: should we pass u_tau or tau_w_vec to the MPI proc.
+            ! responsible for BC imposition, so that it can calculate TauW with the knowledge of 
+            ! the face-tangent vectors?
+            ! Right now, as a work-around, we assume that TauW_MINE(1) (i.e. tau_xy) = tau_w_mag
+            ! and TauW_MINE(2) = 0, which will be OK for the channel testcase, but definitely NOT OK
+            ! for any other flow that is not completely aligned with the x direction.
+            TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = tau_w_mag
+            TauW_MINE(2,InterpToLocalPoint(IntPInd),sProc) = 0.
+        END DO
+    END DO
 
   CASE DEFAULT
     CALL abort(__STAMP__,&
@@ -1096,26 +1168,26 @@ DO WHILE ((SUM(F*F).GT.eps_F).AND.(NewtonIter.LT.50))
   Jac=0.
   DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
     Jac=Jac+dXCL_NGeo(:,:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
-END DO; END DO; END DO
+  END DO; END DO; END DO
 
-! Compute inverse of Jacobian
-sJac=INVERSE(Jac)
+  ! Compute inverse of Jacobian
+  sJac=INVERSE(Jac)
 
-! Iterate Xi using Newton step
-Xi = Xi - MATMUL(sJac,F)
-!  if Newton gets outside reference space range [-1,1], exit.
-! But allow for some oscillation in the first couple of iterations, as we may discard the correct point/element!!
-IF((NewtonIter.GT.4).AND.(ANY(ABS(Xi).GT.1.2))) EXIT
+  ! Iterate Xi using Newton step
+  Xi = Xi - MATMUL(sJac,F)
+  !  if Newton gets outside reference space range [-1,1], exit.
+  ! But allow for some oscillation in the first couple of iterations, as we may discard the correct point/element!!
+  IF((NewtonIter.GT.4).AND.(ANY(ABS(Xi).GT.1.2))) EXIT
 
-! Compute function value
-CALL LagrangeInterpolationPolys(Xi(1),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(1,:))
-CALL LagrangeInterpolationPolys(Xi(2),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(2,:))
-CALL LagrangeInterpolationPolys(Xi(3),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(3,:))
-! F(xi) = x(xi) - hwmPhys
-F=-hwmPhys
-DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
-    F=F+XCL_NGeo(:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
-END DO; END DO; END DO
+  ! Compute function value
+  CALL LagrangeInterpolationPolys(Xi(1),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(1,:))
+  CALL LagrangeInterpolationPolys(Xi(2),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(2,:))
+  CALL LagrangeInterpolationPolys(Xi(3),NGeo,Xi_CLNGeo,wBary_CLNGeo,Lag(3,:))
+  ! F(xi) = x(xi) - hwmPhys
+  F=-hwmPhys
+  DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
+      F=F+XCL_NGeo(:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
+  END DO; END DO; END DO
 END DO !newton
 
 ! check if result is better then previous result
@@ -1125,7 +1197,7 @@ IF(MAXVAL(ABS(Xi)).LT.MAXVAL(ABS(hwmStd))) THEN
   F=0.
   DO k=0,NGeo; DO j=0,NGeo; DO i=0,NGeo
     F=F+XCL_NGeo(:,i,j,k)*Lag(1,i)*Lag(2,j)*Lag(3,k)
-END DO; END DO; END DO
+  END DO; END DO; END DO
 END IF
 
 
@@ -1367,6 +1439,46 @@ END DO; END DO !k
 InterpolateHwm = tmpSum
 
 END FUNCTION InterpolateHwm
+
+
+!==================================================================================================================================
+!> Evaluate u_tau from a log-law given instantaneous velocity, using Newton method
+!==================================================================================================================================
+FUNCTION NewtonLogLaw(velx,nu)
+! MODULES
+USE MOD_WMLES_Vars                  
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! INPUT/OUTPUT VARIABLES
+REAL                        :: velx         ! Tangential velocity to feed wall model (log-law function)
+REAL                        :: nu           ! kinematic viscosity at h_wm
+REAL                        :: NewtonLogLaw ! Computed friction velocity u_tau
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER                     :: iter
+REAL                        :: f,fprime
+!----------------------------------------------------------------------------------------------------------------------------------
+
+NewtonLogLaw = 1.0 ! Initial guess, usually not so bad for u_tau
+iter = 0
+
+SELECT CASE(WallModel)
+    CASE(WMLES_LOGLAW)
+        DO WHILE(iter.LT.10) ! Maximum number of iterations. Usually, u_tau is found with 1~4 iters
+            iter = iter+1
+            f = NewtonLogLaw*( (1./vKarman)*LOG(abs_h_wm*NewtonLogLaw/nu) + B ) - velx
+            fprime = (1./vKarman) * (LOG(abs_h_wm*NewtonLogLaw/nu) + 1.) + B
+            ! IF(ABS(fprime).LE.1.E-5) EXIT ! fprime ~ 0 -- INCOMING OVERFLOW BY DIVISION
+            NewtonLogLaw = NewtonLogLaw - f/fprime
+            IF (ABS(f/fprime).LE.1.E-5) EXIT ! 1.E-5 = stop criterion (tolerance)
+        END DO
+
+    CASE(WMLES_REICHARDT)
+
+END SELECT
+
+
+END FUNCTION NewtonLogLaw
 
 !==================================================================================================================================
 !> Subroutine that controls the receive operations for the Tau_W to be exchanged between processors.

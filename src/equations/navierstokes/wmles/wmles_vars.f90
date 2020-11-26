@@ -22,18 +22,21 @@ SAVE
 
 
 INTEGER, PARAMETER :: WMLES_SCHUMANN = 1
-INTEGER, PARAMETER :: WMLES_WERNERWANGLE = 2
-INTEGER, PARAMETER :: WMLES_REICHARDT = 3
-INTEGER, PARAMETER :: WMLES_SPALDING = 4
-INTEGER, PARAMETER :: WMLES_EQTBLE = 5
+INTEGER, PARAMETER :: WMLES_LOGLAW = 2
+INTEGER, PARAMETER :: WMLES_WERNERWANGLE = 3
+INTEGER, PARAMETER :: WMLES_REICHARDT = 4
+INTEGER, PARAMETER :: WMLES_SPALDING = 5
+INTEGER, PARAMETER :: WMLES_EQTBLE = 6
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
-INTEGER                     :: WallModel ! Integer corresponding to the WallModel
-REAL                        :: h_wm, abs_h_wm
-REAL                        :: delta
-INTEGER                     :: NSuper ! Parameter to find h_wm in standard coordinates, when interpolation is needed.
+INTEGER                     :: WallModel        ! Integer corresponding to the WallModel
+REAL                        :: h_wm, abs_h_wm   ! Wall model height, or exchange location, in terms of off-wall height
+REAL                        :: delta            ! Approximate, or characteristic boundary layer thickness
+REAL                        :: vKarman          ! von Karman constant
+REAL                        :: B                ! Intercept coefficient for log-law-based models
+INTEGER                     :: NSuper           ! Parameter to find h_wm in standard coordinates, when interpolation is needed.
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
                                                    ! Second and third indices: indices "i,j" of the BC face
@@ -67,7 +70,7 @@ REAL, ALLOCATABLE           :: TauW_YOURS(:,:,:) ! Array to store wall shear str
                                                  ! Second index: Local points, associated to a WMLES Side, and with respect to another MPI proc.
                                                  ! Third index: MPI proc to receive tau_w from.
 
-REAL, ALLOCATABLE           :: TauW_MINE_TangVec(:,:,:) ! Wall-tangent vectors (1:3,:,:) for each point that this MPI proc.
+REAL, ALLOCATABLE           :: TauW_MINE_NormVec(:,:,:) ! Wall-normal vectors (1:3,:,:) for each point that this MPI proc.
                                                         ! is responsible for computing tau_w (:,j,:), and each MPI proc. to send
                                                         ! the data (:,:,i)
 
