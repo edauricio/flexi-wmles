@@ -843,7 +843,7 @@ SELECT CASE(WallModel)
 
             !utang = DOT_PRODUCT(vel_inst(:),TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc))
             utang = vel_inst(1)
-            
+
             u_tau = SQRT(1.0/rho_inst) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
             TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
@@ -867,13 +867,12 @@ SELECT CASE(WallModel)
 
             ! Face_xGP is only populated for master sides, so that only master sides have approximation nodes (check InitWMLES above)
             ! hence, use of UPrim_master is guaranteed to be correct here
+            tangvec = UPrim_master(2:4,p,q,SideID) - DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd),sProc))*TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd),sProc)
             VelMag = 0.
-            DO i=2,4
-                VelMag = VelMag + UPrim_master(i,p,q,SideID)**2
+            DO i=1,3
+                VelMag = VelMag + tangvec(i)**2
             END DO
             VelMag = SQRT(VelMag)
-
-            tangvec = UPrim_master(2:4,p,q,SideID) - DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd),sProc))*TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd),sProc)
             tangvec = tangvec/VelMag
 
             utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),tangvec)
@@ -901,13 +900,12 @@ SELECT CASE(WallModel)
             r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
             ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
 
+            tangvec = UPrim(2:4,p,q,r,ElemID) - DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc))*TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc)
             VelMag = 0.
-            DO i=2,4
-                VelMag = VelMag + UPrim(i,p,q,r,ElemID)**2
+            DO i=1,3
+                VelMag = VelMag + tangvec(i)**2
             END DO
             VelMag = SQRT(VelMag)
-
-            tangvec = UPrim(2:4,p,q,r,ElemID) - DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc))*TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc)
             tangvec = tangvec/VelMag
 
             utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),tangvec)
@@ -936,13 +934,12 @@ SELECT CASE(WallModel)
             vel_inst(3) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),4,prim=.TRUE.)
             rho_inst = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),1)
 
+            tangvec = vel_inst(:) - DOT_PRODUCT(vel_inst(:),TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc))*TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc)
             VelMag = 0.
             DO i=1,3
-                VelMag = VelMag + vel_inst(i)**2
+                VelMag = VelMag + tangvec(i)**2
             END DO
             VelMag = SQRT(VelMag)
-
-            tangvec = vel_inst(:) - DOT_PRODUCT(vel_inst(:),TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc))*TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc)
             tangvec = tangvec/VelMag
 
             utang = DOT_PRODUCT(vel_inst,tangvec)
