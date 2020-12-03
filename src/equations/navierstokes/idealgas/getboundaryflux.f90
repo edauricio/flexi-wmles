@@ -370,7 +370,8 @@ CASE(3,4,5,9,91,23,24,25,27)
     DO q=0,ZDIM(Nloc); DO p=0,Nloc
       ! Set pressure by solving local Riemann problem
       UPrim_boundary(5,p,q) = PRESSURE_RIEMANN(UPrim_boundary(:,p,q))
-      UPrim_boundary(2,p,q) = 0. ! slip in tangential directions
+      ! Velocity is slip in tangential directions, so the same tangential components for both ghost and element states
+      UPrim_boundary(2,p,q) = -UPrim_boundary(2,p,q) ! Normal component of the boundary (ghost) state is set to the negative of the element normal velocity
       ! Referring to Toro: Riemann Solvers and Numerical Methods for Fluid Dynamics (Chapter 6.3.3 Boundary Conditions)
       ! the density is chosen from the inside
       UPrim_boundary(1,p,q) = UPrim_master(1,p,q) ! density from inside
@@ -1012,7 +1013,7 @@ ELSE
     ! WMLES BC
     ! This is the final "total flux", i.e. q^\star. If in strong form (e.g. BR2), then,
     ! q- is subtracted from this q^\star on line 1013.
-    ! Solution from the inside with velocity normal component set to 0 (done in GetBoundaryState)
+    ! Solution from the inside with velocity normal component negated (done in GetBoundaryState)
     DO q=0,PP_NZ; DO p=0,PP_N
       ! Compute Flux
       Flux(1            ,p,q) = UPrim_master(1,p,q)
