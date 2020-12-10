@@ -814,7 +814,7 @@ SELECT CASE(WallModel)
             u_tau = SQRT(1.0/UPrim_master(1,p,q,SideID)) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
             TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
-            TauW_MINE(2,FaceToLocalPoint(FPInd),sProc) = (2.0*mu0)*(UPrim_master(3,p,q,SideID)/abs_h_wm)
+            TauW_MINE(2,FaceToLocalPoint(FPInd),sProc) = (2.0*mu0)*(UPrim_master(4,p,q,SideID)/abs_h_wm)
         END DO
 
         ! Calculate tau_w for each h_wm that is approximated as an interior node
@@ -830,7 +830,7 @@ SELECT CASE(WallModel)
             u_tau = SQRT(1.0/UPrim(1,p,q,r,ElemID)) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
             TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
-            TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = (2.0*mu0)*(UPrim(3,p,q,r,ElemID)/abs_h_wm)
+            TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = (2.0*mu0)*(UPrim(4,p,q,r,ElemID)/abs_h_wm)
         END DO
 
         ! Calculate tau_w for each h_wm that must be interpolated
@@ -847,7 +847,7 @@ SELECT CASE(WallModel)
             u_tau = SQRT(1.0/rho_inst) 
             u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
             TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
-            TauW_MINE(2,InterpToLocalPoint(IntPInd),sProc) = (2.0*mu0)*(vel_inst(2)/abs_h_wm)
+            TauW_MINE(2,InterpToLocalPoint(IntPInd),sProc) = (2.0*mu0)*(vel_inst(3)/abs_h_wm)
         END DO
     END DO
 
@@ -1018,19 +1018,19 @@ DO q=0,ZDIM(Nloc); DO p=0,Nloc
   f(2,p,q) = 0. ! tau_xx = 0
   f(3,p,q) = -tau_xy
   f(4,p,q) = 0. ! tau_xz = 0
-  f(5,p,q) = -(UPrim_master(3,p,q)*tau_xy) ! -(u*tau_xx + v*tau_xy + w*tau_xz - kdTdx)
+  f(5,p,q) = 0. ! -(UPrim_master(3,p,q)*tau_xy) ! -(u*tau_xx + v*tau_xy + w*tau_xz - kdTdx)
 
   g(1,p,q) = 0.
   g(2,p,q) = -tau_xy ! tau_yx = tau_xy
   g(3,p,q) = 0. ! tau_yy = 0
   g(4,p,q) = -tau_yz ! tau_yz = tau_zy
-  g(5,p,q) = -(UPrim_master(2,p,q)*tau_xy + UPrim_master(4,p,q)*tau_yz) ! -(u*tau_yx + v*tau_yy + w*tau_yz - kdTdx)
+  g(5,p,q) = 0. ! -(UPrim_master(2,p,q)*tau_xy + UPrim_master(4,p,q)*tau_yz) ! -(u*tau_yx + v*tau_yy + w*tau_yz - kdTdx)
 
   h(1,p,q) = 0.
   h(2,p,q) = 0. ! tau_zx = 0
   h(3,p,q) = -tau_yz ! tau_zy = tau_yz
   h(4,p,q) = 0. ! tau_zz = 0
-  h(5,p,q) = -(UPrim_master(3,p,q)*tau_yz) ! -(u*tau_zx + v*tau_zy + w*tau_zz - kdTdx)
+  h(5,p,q) = 0. !-(UPrim_master(3,p,q)*tau_yz) ! -(u*tau_zx + v*tau_zy + w*tau_zz - kdTdx)
 
 
   LOGWRITE(*,'(2(I4,2X),15(E15.8,2X))') p, q, f(1,p,q), f(2,p,q), f(3,p,q), f(4,p,q), f(5,p,q),&

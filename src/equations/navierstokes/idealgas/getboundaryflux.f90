@@ -1011,7 +1011,7 @@ ELSE
 #if WMLES
   CASE(5)
     ! WMLES BC
-    ! This is the final "total flux", i.e. q^\star. If in strong form (e.g. BR2), then,
+    ! This is the final "total flux", i.e. u^\star (BR2 eq ...). If in strong form (e.g. BR2), then,
     ! q- is subtracted from this q^\star on line 1013.
     ! Solution from the inside with velocity normal component negated (done in GetBoundaryState)
     DO q=0,PP_NZ; DO p=0,PP_N
