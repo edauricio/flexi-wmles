@@ -27,6 +27,7 @@ INTEGER, PARAMETER :: WMLES_WERNERWANGLE = 3
 INTEGER, PARAMETER :: WMLES_REICHARDT = 4
 INTEGER, PARAMETER :: WMLES_SPALDING = 5
 INTEGER, PARAMETER :: WMLES_EQTBLE = 6
+INTEGER, PARAMETER :: WMLES_COUETTE = 7
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES

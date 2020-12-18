@@ -133,8 +133,10 @@ CASE(7) ! Shu Vortex
   IniAmplitude = GETREAL('IniAmplitude','0.2')
   IniHalfwidth = GETREAL('IniHalfwidth','0.2')
 CASE(8) ! couette-poiseuille flow
-  P_Parameter  = GETREAL('P_Parameter','0.0')
-  U_Parameter  = GETREAL('U_Parameter','0.01')
+  !P_Parameter  = GETREAL('P_Parameter','0.0')
+  !U_Parameter  = GETREAL('U_Parameter','0.01')
+  P_Parameter = 0.
+  U_Parameter = 0.01444
 CASE(10) ! shock
   MachShock    = GETREAL('MachShock','1.5')
   PreShockDens = GETREAL('PreShockDens','1.0')
@@ -727,6 +729,18 @@ CASE(4) ! exact function
     END IF
 #endif
   END DO ! iElem
+
+! CASE (8) ! Couette flow (flow between parallel plates, drived by dpdx, not plate movement)
+!   ! A good value for dpdx for air properties at 15oC is -3.1x10^-6,
+!   ! as it gives a Reynolds number of ~1500, which ensures a laminar flow.
+!   ! The "bulk velocity" in this case is 0.01444 (U_b = (1./h)*\int_{0}^{h}u(y)dy)
+!   DO iElem=1,nElems
+!     DO k=0,PP_NZ; DO j=0,PP_N; DO i=0,PP_N
+!       Ut(2,i,j,k,iElem)=Ut(2,i,j,k,iElem) +(1.E-7)/sJ(i,j,k,iElem,0)
+!       !Ut(5,i,j,k,iElem)=Ut(5,i,j,k,iElem) +(3.1E-6)*0.01444/sJ(i,j,k,iElem,0)
+!     END DO; END DO; END DO
+!   END DO
+
 CASE(41) ! Sinus in x
   Frequency=1.
   Amplitude=0.1

@@ -53,6 +53,7 @@ CALL addStrListEntry('WallModel', 'WernerWangle', WMLES_WERNERWANGLE)
 CALL addStrListEntry('WallModel', 'Reichardt', WMLES_REICHARDT)
 CALL addStrListEntry('WallModel', 'Spalding', WMLES_SPALDING)
 CALL addStrListEntry('WallModel', 'EquilibriumTBLE', WMLES_EQTBLE)
+CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
 
 CALL prms%CreateRealOption('h_wm', "Distance from the wall at which LES and Wall Model "// &
                                     "exchange instantaneous flow information", "0.2")
@@ -960,6 +961,72 @@ SELECT CASE(WallModel)
         END DO
     END DO
 
+  CASE(WMLES_COUETTE)
+
+    ! Test for a laminar flow with known velocity profile, so that we can debug the implementation
+
+    DO sProc=0,nProcs_SendTauW
+        ! Calculate tau_w for each h_wm that is approximated as a face node
+        DO FPInd=1,nTauW_MINE_FacePoint(sProc)
+            p = TauW_MINE_FacePoint(1,FPInd,sProc)
+            q = TauW_MINE_FacePoint(2,FPInd,sProc)
+            SideID = TauW_MINE_FacePoint(3,FPInd,sProc)
+
+            ! Hard coded value (analytic solution)
+            TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = 0.5
+            IF (Face_xGP(2,p,q,0,SideID) .GE. 0) TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = -0.5
+
+            ! Calculated as if a model was employed
+            ! utang = UPrim_master(2,p,q,SideID)
+
+            ! u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+
+            ! TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = -0.5*u_tau
+            ! IF(Face_xGP(2,p,q,0,SideID) .GE. 0) TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = 0.5*u_tau
+            TauW_MINE(2,FaceToLocalPoint(FPInd),sProc) = 0.
+
+        END DO
+
+        ! Calculate tau_w for each h_wm that is approximated as an interior node
+        DO IPInd=1,nTauW_MINE_InteriorPoint(sProc)
+            p = TauW_MINE_InteriorPoint(1,IPInd,sProc)
+            q = TauW_MINE_InteriorPoint(2,IPInd,sProc)
+            r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
+            ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
+
+            ! Hard coded value (analytic solution)
+            TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = 0.5
+            IF (Elem_xGP(2,p,q,r,ElemID) .GE. 0) TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = -0.5
+
+            ! Calculated as if a model was employed
+            ! utang = UPrim(2,p,q,r,ElemID)
+
+            ! u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+
+            ! TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = -0.5*u_tau
+            ! IF(Elem_xGP(2,p,q,r,ElemID) .GE. 0) TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = 0.5*u_tau
+            TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = 0.
+
+        END DO
+
+        ! Calculate tau_w for each h_wm that must be interpolated
+        DO IntPInd=1,nTauW_MINE_Interpolate(sProc)
+            ElemID = INT(TauW_MINE_Interpolate(4,IntPInd,sProc))
+            vel_inst(1) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),2,prim=.TRUE.)
+
+            ! Hard coded value (analytic solution)
+            TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = 0.5
+            IF (Elem_xGP(2,1,1,1,ElemID) .GE. 0) TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = -0.5
+
+            ! u_tau = NewtonCouette(vel_inst(1),mu0) ! dpdx, obviously.
+
+            ! TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = -0.5*u_tau
+            ! IF(Elem_xGP(2,p,q,r,ElemID) .GE. 0) TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = 0.5*u_tau
+            TauW_MINE(2,InterpToLocalPoint(IntPInd),sProc) = 0.
+        END DO
+    END DO
+
+
   CASE DEFAULT
     CALL abort(__STAMP__,&
          'Unknown definition of Wall Model.')
@@ -1447,8 +1514,8 @@ USE MOD_WMLES_Vars
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT/OUTPUT VARIABLES
-REAL                        :: velx         ! Tangential velocity to feed wall model (log-law function)
-REAL                        :: nu           ! kinematic viscosity at h_wm
+REAL, INTENT(IN)            :: velx         ! Tangential velocity to feed wall model (log-law function)
+REAL, INTENT(IN)            :: nu           ! kinematic viscosity at h_wm
 REAL                        :: NewtonLogLaw ! Computed friction velocity u_tau
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
@@ -1476,6 +1543,38 @@ END SELECT
 
 
 END FUNCTION NewtonLogLaw
+
+!==================================================================================================================================
+!> Evaluate u_tau from a log-law given instantaneous velocity, using Newton method
+!==================================================================================================================================
+FUNCTION NewtonCouette(velx,nu)
+! MODULES
+USE MOD_WMLES_Vars                  
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! INPUT/OUTPUT VARIABLES
+REAL, INTENT(IN)            :: velx         ! Tangential velocity to feed wall model (log-law function)
+REAL, INTENT(IN)            :: nu           ! kinematic viscosity at h_wm
+REAL                        :: NewtonCouette ! Computed friction velocity u_tau
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER                     :: iter
+REAL                        :: f,fprime
+!----------------------------------------------------------------------------------------------------------------------------------
+
+NewtonCouette = 0.5 ! Initial guess, usually not so bad for u_tau
+iter = 0
+
+DO WHILE(iter.LT.10) ! Maximum number of iterations. Usually, u_tau is found with 1~4 iters
+    iter = iter+1
+    f = velx + (1./(2.*nu))*NewtonCouette*abs_h_wm*(1.-abs_h_wm)
+    fprime = (1./(2.*nu))*abs_h_wm*(1.-abs_h_wm)
+    ! IF(ABS(fprime).LE.1.E-5) EXIT ! fprime ~ 0 -- INCOMING OVERFLOW BY DIVISION
+    NewtonCouette = NewtonCouette - f/fprime
+    IF (ABS(f/fprime).LE.1.E-5) EXIT ! 1.E-5 = stop criterion (tolerance)
+END DO
+
+END FUNCTION NewtonCouette
 
 !==================================================================================================================================
 !> Subroutine that controls the receive operations for the Tau_W to be exchanged between processors.
