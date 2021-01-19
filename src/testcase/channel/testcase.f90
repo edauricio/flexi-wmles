@@ -158,11 +158,13 @@ dpdx = -1. ! Re_tau^2*rho*nu^2/delta^3
 
 IF(.NOT.MPIRoot) RETURN
 
-ALLOCATE(writeBuf(3,nWriteStats))
-Filename = TRIM(ProjectName)//'_Stats'
-varnames(1) = 'dpdx'
-varnames(2) = 'bulkVel'
-CALL InitOutputToFile(Filename,'Statistics',2,varnames)
+IF (.NOT.postiMode) THEN
+  ALLOCATE(writeBuf(3,nWriteStats))
+  Filename = TRIM(ProjectName)//'_Stats'
+  varnames(1) = 'dpdx'
+  varnames(2) = 'bulkVel'
+  CALL InitOutputToFile(Filename,'Statistics',2,varnames)
+END IF
 
 SWRITE(UNIT_stdOut,'(A)')' INIT TESTCASE CHANNEL DONE!'
 SWRITE(UNIT_StdOut,'(132("-"))')

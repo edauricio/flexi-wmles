@@ -25,6 +25,11 @@ SAVE
 INTEGER                 :: OutputFormat      !< Choose the main format for output. 0: Tecplot, 2: HDF5
 INTEGER                 :: NCalc             !< Polynomial degree to perform DFFT on
 REAL                    :: Re_tau            !< Reynolds number based on friction velocity and channel half height
+REAL                    :: u_tau             !< calculated friction velocity for normalization
+REAL                    :: Re_tauReal        !< Calculated Reynolds number based on the above friction velocity
+LOGICAL                 :: Normalize         !< Indicate whether the output should be normalized by the computed friction velocity
+CHARACTER(LEN=255)      :: prmfile=''
+CHARACTER(LEN=255)      :: WallBCName
 
 REAL,ALLOCATABLE        :: VdmGaussEqui(:,:) !< Vandermonde from state to FFT grid
 

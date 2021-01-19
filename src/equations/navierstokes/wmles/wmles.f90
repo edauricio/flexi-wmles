@@ -46,7 +46,7 @@ USE MOD_ReadInTools             ,ONLY: prms, addStrListEntry
 IMPLICIT NONE
 !==================================================================================================================================
 CALL prms%SetSection("Wall-Modeled LES")
-CALL prms%CreateIntFromStringOption('WallModel', "Wall model to be used on walls defined with approximate boundary conditions")
+CALL prms%CreateIntFromStringOption('WallModel', "Wall model to be used on walls defined with approximate boundary conditions", 'LogLaw')
 CALL addStrListEntry('WallModel', 'Schumann', WMLES_SCHUMANN)
 CALL addStrListEntry('WallModel', 'LogLaw', WMLES_LOGLAW)
 CALL addStrListEntry('WallModel', 'WernerWangle', WMLES_WERNERWANGLE)
@@ -59,7 +59,7 @@ CALL prms%CreateRealOption('h_wm', "Distance from the wall at which LES and Wall
                                     "exchange instantaneous flow information", "0.2")
 CALL prms%CreateRealOption('delta', "Estimated Boundary Layer Thickness")
 CALL prms%CreateRealOption('vKarman', "von Karman constant", "0.41")
-CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.5")
+CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.2")
 
 END SUBROUTINE DefineParametersWMLES
 
@@ -113,10 +113,10 @@ INTEGER                         :: iStat(MPI_STATUS_SIZE), CalcInfoRequests(0:nP
 INTEGER                         :: hwmRank
 #endif
 !==================================================================================================================================
-IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
-  CALL CollectiveStop(__STAMP__,&
-    'Wall-Modeled LES not ready to be called or already called.')
-END IF
+!IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
+!  CALL CollectiveStop(__STAMP__,&
+!    'Wall-Modeled LES not ready to be called or already called.')
+!END IF
 SWRITE(UNIT_StdOut,'(132("-"))')
 SWRITE(UNIT_stdOut,'(A)') ' INIT Wall-Modeled LES...'
 
@@ -875,12 +875,23 @@ SELECT CASE(WallModel)
             END DO
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag
+            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+            ! Force tangvec to be in the x dir
+            tangvec = (/1.,0.,0./)
+            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
 
             utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),tangvec)
 
             u_tau = NewtonLogLaw(utang,(mu0/UPrim_master(1,p,q,SideID)))
             tau_w_mag = UPrim_master(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = tau_w_mag*tangvec
+
+            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+            ! Create vector aligned with wall-normal velocity with tau_xy
+            tau_w_vec = (/0.,tau_w_mag,0./)
+            ! Project it onto the normal direction so that the correct signal is imposed
+            TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = -1.*DOT_PRODUCT(tau_w_vec(1:3),-TauW_MINE_NormVec(1:3,FaceToLocalPoint(FPInd),sProc))
+            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
 
             ! TODO
             ! Associated with the TODO above: should we pass u_tau or tau_w_vec to the MPI proc.
@@ -889,9 +900,8 @@ SELECT CASE(WallModel)
             ! Right now, as a work-around, we assume that TauW_MINE(1) (i.e. tau_xy) = tau_w_mag
             ! and TauW_MINE(2) = 0, which will be OK for the channel testcase, but definitely NOT OK
             ! for any other flow that is not completely aligned with the x direction.
-            TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = tau_w_mag
+            !TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = tau_w_mag
             TauW_MINE(2,FaceToLocalPoint(FPInd),sProc) = 0.
-
         END DO
 
         ! Calculate tau_w for each h_wm that is approximated as an interior node
@@ -908,12 +918,23 @@ SELECT CASE(WallModel)
             END DO
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag
+            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+            ! Force tangvec to be in the x dir
+            tangvec = (/1.,0.,0./)
+            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
 
             utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),tangvec)
 
             u_tau = NewtonLogLaw(utang,(mu0/UPrim(1,p,q,r,ElemID)))
-            tau_w_mag = UPrim_master(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            tau_w_mag = UPrim(1,p,q,r,ElemID)*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = tau_w_mag*tangvec
+
+            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+            ! Create vector aligned with wall-normal velocity with tau_xy
+            tau_w_vec = (/0.,tau_w_mag,0./)
+            ! Project it onto the normal direction so that the correct signal is imposed
+            TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = -1.*DOT_PRODUCT(tau_w_vec(1:3),-TauW_MINE_NormVec(1:3,InteriorToLocalPoint(IPInd),sProc))
+            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
 
             ! TODO
             ! Associated with the TODO above: should we pass u_tau or tau_w_vec to the MPI proc.
@@ -922,9 +943,8 @@ SELECT CASE(WallModel)
             ! Right now, as a work-around, we assume that TauW_MINE(1) (i.e. tau_xy) = tau_w_mag
             ! and TauW_MINE(2) = 0, which will be OK for the channel testcase, but definitely NOT OK
             ! for any other flow that is not completely aligned with the x direction.
-            TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = tau_w_mag
+            !TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = tau_w_mag
             TauW_MINE(2,InteriorToLocalPoint(IPInd),sProc) = 0.
-
         END DO
 
         ! Calculate tau_w for each h_wm that must be interpolated
@@ -943,11 +963,23 @@ SELECT CASE(WallModel)
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag
 
+            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+            ! Force tangvec to be in the x dir
+            tangvec = (/1.,0.,0./)
+            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+
             utang = DOT_PRODUCT(vel_inst,tangvec)
 
             u_tau = NewtonLogLaw(utang,(mu0/rho_inst))
-            tau_w_mag = UPrim_master(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            tau_w_mag = rho_inst*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = tau_w_mag*tangvec
+
+            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+            ! Create vector aligned with wall-normal velocity with tau_xy
+            tau_w_vec = (/0.,tau_w_mag,0./)
+            ! Project it onto the normal direction so that the correct signal is imposed
+            TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = -1.*DOT_PRODUCT(tau_w_vec(1:3),-TauW_MINE_NormVec(1:3,InterpToLocalPoint(IntPInd),sProc))
+            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
 
             ! TODO
             ! Associated with the TODO above: should we pass u_tau or tau_w_vec to the MPI proc.
@@ -956,7 +988,7 @@ SELECT CASE(WallModel)
             ! Right now, as a work-around, we assume that TauW_MINE(1) (i.e. tau_xy) = tau_w_mag
             ! and TauW_MINE(2) = 0, which will be OK for the channel testcase, but definitely NOT OK
             ! for any other flow that is not completely aligned with the x direction.
-            TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = tau_w_mag
+            !TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = tau_w_mag
             TauW_MINE(2,InterpToLocalPoint(IntPInd),sProc) = 0.
         END DO
     END DO
@@ -973,13 +1005,18 @@ SELECT CASE(WallModel)
             SideID = TauW_MINE_FacePoint(3,FPInd,sProc)
 
             ! Hard coded value (analytic solution)
-            TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = 0.5
-            IF (Face_xGP(2,p,q,0,SideID) .GE. 0) TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = -0.5
+            ! TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = 0.5
+            ! IF (Face_xGP(2,p,q,0,SideID) .GE. 0) TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = -0.5
 
             ! Calculated as if a model was employed
-            ! utang = UPrim_master(2,p,q,SideID)
+            utang = UPrim_master(2,p,q,SideID)
 
-            ! u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+            u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+
+            ! Create vector aligned with wall-normal direction and magnitude of tau_xy
+            tau_w_vec = (/0.,-0.5*u_tau,0./)
+            ! Project it onto the normal direction so that the correct signal is imposed
+            TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = -1.*DOT_PRODUCT(tau_w_vec(1:3),-TauW_MINE_NormVec(1:3,FaceToLocalPoint(FPInd),sProc))
 
             ! TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = -0.5*u_tau
             ! IF(Face_xGP(2,p,q,0,SideID) .GE. 0) TauW_MINE(1,FaceToLocalPoint(FPInd),sProc) = 0.5*u_tau
@@ -995,13 +1032,18 @@ SELECT CASE(WallModel)
             ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
 
             ! Hard coded value (analytic solution)
-            TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = 0.5
-            IF (Elem_xGP(2,p,q,r,ElemID) .GE. 0) TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = -0.5
+            ! TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = 0.5
+            ! IF (Elem_xGP(2,p,q,r,ElemID) .GE. 0) TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = -0.5
 
             ! Calculated as if a model was employed
-            ! utang = UPrim(2,p,q,r,ElemID)
+            utang = UPrim(2,p,q,r,ElemID)
 
-            ! u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+            u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+
+            ! Create vector aligned with wall-normal direction and magnitude of tau_xy
+            tau_w_vec = (/0.,-0.5*u_tau,0./)
+            ! Project it onto the normal direction so that the correct signal is imposed
+            TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = -1.*DOT_PRODUCT(tau_w_vec(1:3),-TauW_MINE_NormVec(1:3,InteriorToLocalPoint(IPInd),sProc))
 
             ! TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = -0.5*u_tau
             ! IF(Elem_xGP(2,p,q,r,ElemID) .GE. 0) TauW_MINE(1,InteriorToLocalPoint(IPInd),sProc) = 0.5*u_tau
@@ -1015,10 +1057,15 @@ SELECT CASE(WallModel)
             vel_inst(1) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),2,prim=.TRUE.)
 
             ! Hard coded value (analytic solution)
-            TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = 0.5
-            IF (Elem_xGP(2,1,1,1,ElemID) .GE. 0) TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = -0.5
+            ! TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = 0.5
+            ! IF (Elem_xGP(2,1,1,1,ElemID) .GE. 0) TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = -0.5
 
-            ! u_tau = NewtonCouette(vel_inst(1),mu0) ! dpdx, obviously.
+            u_tau = NewtonCouette(vel_inst(1),mu0) ! dpdx, obviously.
+
+            ! Create vector aligned with wall-normal direction and magnitude of tau_xy
+            tau_w_vec = (/0.,-0.5*u_tau,0./)
+            ! Project it onto the normal direction so that the correct signal is imposed
+            TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = -1.*DOT_PRODUCT(tau_w_vec(1:3),-TauW_MINE_NormVec(1:3,InterpToLocalPoint(IntPInd),sProc))
 
             ! TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = -0.5*u_tau
             ! IF(Elem_xGP(2,p,q,r,ElemID) .GE. 0) TauW_MINE(1,InterpToLocalPoint(IntPInd),sProc) = 0.5*u_tau
@@ -1711,6 +1758,28 @@ IMPLICIT NONE
 
 !==================================================================================================================================
 SDEALLOCATE(WMLES_Tauw)
+SDEALLOCATE(BCSideToWMLES)
+SDEALLOCATE(WMLESToBCSide)
+SDEALLOCATE(TauW_Proc)
+SDEALLOCATE(Proc_RecvTauW)
+SDEALLOCATE(Proc_RecvTauW_Inv)
+SDEALLOCATE(Proc_SendTauW)
+SDEALLOCATE(nTauW_MINE)
+SDEALLOCATE(nTauW_YOURS)
+SDEALLOCATE(TauW_MINE)
+SDEALLOCATE(TauW_YOURS)
+SDEALLOCATE(TauW_MINE_FacePoint)
+SDEALLOCATE(TauW_MINE_InteriorPoint)
+SDEALLOCATE(TauW_MINE_Interpolate)
+SDEALLOCATE(TauW_MINE_NormVec)
+SDEALLOCATE(nTauW_MINE_FacePoint)
+SDEALLOCATE(nTauW_MINE_InteriorPoint)
+SDEALLOCATE(nTauW_MINE_Interpolate)
+SDEALLOCATE(FaceToLocalPoint)
+SDEALLOCATE(InteriorToLocalPoint)
+SDEALLOCATE(InterpToLocalPoint)
+SDEALLOCATE(WMLES_RecvRequests)
+SDEALLOCATE(WMLES_SendRequests)
 
 
 END SUBROUTINE FinalizeWMLES

@@ -44,7 +44,7 @@ INTERFACE PrimStateAtFFTCoords
   MODULE PROCEDURE PrimStateAtFFTCoords
 END INTERFACE
 
-PUBLIC:: InitFFT,FinalizeFFT,PerformFFT,FFTOutput,PrimStateAtFFTCoords
+PUBLIC:: InitFFT,FinalizeFFT,PerformFFT,FFTOutput,PrimStateAtFFTCoords,ReadState
 
 CONTAINS
 
@@ -365,6 +365,12 @@ Ez_vv(:,2:nSamples_SpecK)=Ez_vv(:,2:nSamples_SpecK)/(N_FFT(1)*REAL(nArgs-1)*2)
 Ez_ww(:,2:nSamples_SpecK)=Ez_ww(:,2:nSamples_SpecK)/(N_FFT(1)*REAL(nArgs-1)*2)
 Ez_pp(:,2:nSamples_SpecK)=Ez_pp(:,2:nSamples_SpecK)/(N_FFT(1)*REAL(nArgs-1)*2)
 
+IF (Normalize) THEN ! Normalization of mean variables by u_tau
+  M_t = M_t/u_tau
+  MS_t = MS_t/(u_tau**2)
+  MS_PSD = MS_PSD/(u_tau**2)
+END IF
+
 SELECT CASE(OutputFormat)
   CASE(0) !Write mean square fluctuations data and mean velocity to Tecplot format
     FileUnit_EK=155
@@ -477,6 +483,8 @@ SELECT CASE(OutputFormat)
     CALL WriteAttribute(File_ID,'ProjectName' ,1,StrScalar=(/ProjectName/))
     CALL WriteAttribute(File_ID,'Time'        ,1,RealScalar=time)
     CALL WriteAttribute(File_ID,'VarNames'    ,nVal,StrArray=VarNamesFFT)
+    IF (Normalize) CALL WriteAttribute(File_ID, 'Re_tau',1,RealScalar=Re_tauReal)
+    IF (Normalize) CALL WriteAttribute(File_ID, 'u_tau',1,RealScalar=u_tau)
     WRITE(ZoneTitle,'(A)')'MeanSquares'
     offsetVar=0
     DO iVar=1,nVal
@@ -506,6 +514,8 @@ SELECT CASE(OutputFormat)
     CALL WriteAttribute(File_ID,'ProjectName' ,1,StrScalar=(/ProjectName/))
     CALL WriteAttribute(File_ID,'Time'        ,1,RealScalar=time)
     CALL WriteAttribute(File_ID,'VarNames'    ,nVal,StrArray=VarNamesFFT)
+    IF (Normalize) CALL WriteAttribute(File_ID, 'Re_tau',1,RealScalar=Re_tauReal)
+    IF (Normalize) CALL WriteAttribute(File_ID, 'u_tau',1,RealScalar=u_tau)
     DO j=N_FFT(2)/2+1,N_FFT(2)
       offsetVar=0
       DO k=1,nSamples_specK
@@ -545,6 +555,8 @@ SELECT CASE(OutputFormat)
     CALL WriteAttribute(File_ID,'ProjectName' ,1,StrScalar=(/ProjectName/))
     CALL WriteAttribute(File_ID,'Time'        ,1,RealScalar=time)
     CALL WriteAttribute(File_ID,'VarNames'    ,nVal,StrArray=VarNamesFFT)
+    IF (Normalize) CALL WriteAttribute(File_ID, 'Re_tau',1,RealScalar=Re_tauReal)
+    IF (Normalize) CALL WriteAttribute(File_ID, 'u_tau',1,RealScalar=u_tau)
     DO j=N_FFT(2)/2+1,N_FFT(2)
       offsetVar=0
       DO k=1,nSamples_specK
@@ -568,6 +580,172 @@ SELECT CASE(OutputFormat)
 
 END SELECT
 END SUBROUTINE FFTOutput
+
+
+!===================================================================================================================================
+!> This routine will read in the current state from the statefile. Will call one of two routines: ReadStateWithoutGradients if no
+!> gradients have to be visualized or calculated and so no DG operator call is necessary, or ReadStateAndGradients if gradients
+!> are needed and we need to calculate the DG operator once.
+!> If the DG operator has to be called, we need some parameters. Either a seperate parameter file is passed,  then this one will
+!> be used, or we try to extract the parameter file from the userblock.
+!> If both fails and we need to compute the DG operator, the program will abort.
+!> If the DG operator should not be called and no parameter file (seperate or from userblock) can be found,
+!> we specify PP_N from the state file as our polynomial degree (later needed by InitInterpolation).
+!===================================================================================================================================
+SUBROUTINE ReadState(prmfile,statefile,meshfile)
+USE MOD_Globals
+USE MOD_PreProc
+USE MOD_ReadInTools ,ONLY:ExtractParameterFile
+IMPLICIT NONE
+!-----------------------------------------------------------------------------------------------------------------------------------
+! INPUT / OUTPUT VARIABLES
+CHARACTER(LEN=255),INTENT(INOUT) :: prmfile      !< FLEXI parameter file, used if DG operator is called
+CHARACTER(LEN=255),INTENT(IN)    :: statefile    !< HDF5 state file
+CHARACTER(LEN=255),INTENT(IN)    :: meshfile     !< meshfile
+!-----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+LOGICAL                          :: userblockFound
+!===================================================================================================================================
+userblockFound = .TRUE. ! Set to true to later test for existing parameters either form userblock or from seperate file
+IF (LEN_TRIM(prmfile).EQ.0) THEN ! No seperate parameter file has been given
+  ! Try to extract parameter file
+  prmfile = ".flexi.ini"
+  CALL ExtractParameterFile(statefile,prmfile,userblockFound)
+  ! Only abort if we need some parameters to call the DG operator
+  IF (.NOT.userblockFound) THEN
+    CALL CollectiveStop(__STAMP__, "No userblock found in state file '"//TRIM(statefile)//"' and no parameter file specified.")
+  END IF
+END IF
+CALL ReadStateAndGradients(prmfile,statefile,meshfile)
+END SUBROUTINE ReadState
+
+!===================================================================================================================================
+!> Read a state file via Restart routine and preforms one DGTimeDerivative_weakForm.
+!> This fill at least 'U', 'UPrim', and the gradients 'gradUx/y/z'.
+!===================================================================================================================================
+SUBROUTINE ReadStateAndGradients(prmfile,statefile,meshfile)
+! MODULES
+USE MOD_Globals
+USE MOD_PreProc
+USE MOD_MPI           ,ONLY: DefineParametersMPI
+#if USE_MPI
+USE MOD_MPI           ,ONLY: InitMPIvars,FinalizeMPI
+#endif
+USE MOD_IO_HDF5       ,ONLY: DefineParametersIO_HDF5,InitIOHDF5
+USE MOD_Interpolation ,ONLY: DefineParametersInterpolation,InitInterpolation,FinalizeInterpolation
+USE MOD_Restart       ,ONLY: DefineParametersRestart,InitRestart,Restart,FinalizeRestart
+USE MOD_Mesh          ,ONLY: DefineParametersMesh,InitMesh,FinalizeMesh
+USE MOD_Indicator     ,ONLY: DefineParametersIndicator,InitIndicator,FinalizeIndicator
+#if FV_ENABLED
+USE MOD_FV            ,ONLY: DefineParametersFV,InitFV,FinalizeFV
+USE MOD_FV_Basis      ,ONLY: InitFV_Basis,FinalizeFV_Basis
+#endif
+USE MOD_DG            ,ONLY: InitDG,DGTimeDerivative_weakForm,FinalizeDG
+USE MOD_Mortar        ,ONLY: InitMortar,FinalizeMortar
+USE MOD_EOS           ,ONLY: DefineParametersEos
+USE MOD_Equation      ,ONLY: DefineParametersEquation,InitEquation,FinalizeEquation
+USE MOD_Exactfunc     ,ONLY: DefineParametersExactFunc
+USE MOD_TimeDisc,          ONLY:DefineParametersTimedisc,InitTimeDisc,TimeDisc
+USE MOD_Analyze,           ONLY:DefineParametersAnalyze,InitAnalyze
+USE MOD_RecordPoints,      ONLY:DefineParametersRecordPoints,InitRecordPoints
+USE MOD_Output,            ONLY:DefineParametersOutput,InitOutput
+USE MOD_Testcase,          ONLY:DefineParametersTestcase
+#if PARABOLIC
+USE MOD_Lifting       ,ONLY: DefineParametersLifting,InitLifting,FinalizeLifting
+#endif
+USE MOD_Filter,         ONLY:DefineParametersFilter,InitFilter,FinalizeFilter
+USE MOD_Overintegration,ONLY:DefineParametersOverintegration,InitOverintegration,FinalizeOverintegration
+USE MOD_ReadInTools   ,ONLY: prms
+USE MOD_ReadInTools   ,ONLY: FinalizeParameters
+USE MOD_Restart_Vars  ,ONLY: RestartTime
+IMPLICIT NONE
+!-----------------------------------------------------------------------------------------------------------------------------------
+! INPUT / OUTPUT VARIABLES
+CHARACTER(LEN=255),INTENT(IN):: prmfile       !< FLEXI parameter file, used if DG operator is called
+CHARACTER(LEN=255),INTENT(IN):: statefile     !< HDF5 state file
+CHARACTER(LEN=255),INTENT(IN):: meshfile      !< meshfile
+!-----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+!===================================================================================================================================
+CALL FinalizeInterpolation()
+#if FV_ENABLED
+CALL FinalizeFV_Basis()
+CALL FinalizeFV()
+#endif
+CALL FinalizeMortar()
+CALL FinalizeRestart()
+
+#if USE_MPI
+CALL FinalizeMPI()
+#endif
+CALL FinalizeIndicator()
+CALL FinalizeEquation()
+CALL FinalizeDG()
+CALL FinalizeOverintegration()
+CALL FinalizeFilter()
+#if PARABOLIC
+CALL FinalizeLifting()
+#endif
+
+! read options from parameter file
+CALL FinalizeParameters()
+CALL DefineParametersMPI()
+CALL DefineParametersIO_HDF5()
+CALL DefineParametersInterpolation()
+CALL DefineParametersRestart()
+CALL DefineParametersMesh()
+CALL DefineParametersFilter()
+CALL DefineParametersOverintegration()
+CALL DefineParametersIndicator()
+#if FV_ENABLED
+CALL DefineParametersFV()
+#endif
+CALL DefineParametersEos()
+CALL DefineParametersEquation()
+CALL DefineParametersExactFunc()
+#if PARABOLIC
+CALL DefineParametersLifting()
+#endif
+CALL DefineParametersTestCase()
+CALL prms%read_options(prmfile)
+
+! Initialization of I/O routines
+CALL InitIOHDF5()
+
+CALL InitInterpolation()
+#if FV_ENABLED
+CALL InitFV_Basis()
+#endif
+CALL InitMortar()
+CALL InitRestart(statefile)
+
+! TODO: what todo with vars that are set in InitOutput, that normally is executed here.
+
+CALL FinalizeMesh()
+CALL InitMesh(meshMode=2,MeshFile_IN=MeshFile)
+
+CALL InitFilter()
+CALL InitOverintegration()
+CALL InitIndicator()
+#if USE_MPI
+CALL InitMPIvars()
+#endif
+CALL InitEquation()
+
+CALL InitDG()
+#if FV_ENABLED
+CALL InitFV()
+#endif
+#if PARABOLIC
+CALL InitLifting()
+#endif /*PARABOLIC*/
+CALL Restart(doFlushFiles=.FALSE.)
+SWRITE(*,*) "Call DGTimeDerivative_weakForm ... "
+CALL DGTimeDerivative_weakForm(RestartTime)
+SWRITE(*,*) "  DONE"
+
+CALL FinalizeParameters()
+END SUBROUTINE ReadStateAndGradients
 
 
 !===================================================================================================================================

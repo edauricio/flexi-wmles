@@ -310,6 +310,9 @@ USE MOD_CalcTimeStep    ,ONLY: FinalizeCalctimestep
 #if EDDYVISCOSITY
 USE MOD_EddyVisc        ,ONLY: FinalizeEddyVisc
 #endif /*EDDYVISCOSITY*/
+#if WMLES
+USE MOD_WMLES,          ONLY: FinalizeWMLES
+#endif
 USE MOD_GetBoundaryFlux, ONLY: FinalizeBC
 IMPLICIT NONE
 !==================================================================================================================================
@@ -319,6 +322,9 @@ CALL FinalizeCalctimestep()
 #if EDDYVISCOSITY
 CALL FinalizeEddyVisc()
 #endif /*EDDYVISCOSITY*/
+#if WMLES
+CALL FinalizeWMLES
+#endif
 CALL FinalizeBC()
 SDEALLOCATE(RefStatePrim)
 SDEALLOCATE(RefStateCons)

@@ -29,7 +29,7 @@ USE MOD_ReadInTools
 USE MOD_StringTools,             ONLY: STRICMP,GetFileExtension
 USE MOD_Mesh,                    ONLY: DefineParametersMesh,InitMesh,FinalizeMesh
 USE MOD_Mesh_Readin,             ONLY: ReadIJKSorting
-USE MOD_Mesh_Vars,               ONLY: nElems,OffsetElem
+USE MOD_Mesh_Vars,               ONLY: nElems,OffsetElem,nBCSides,BC,BoundaryName,NormVec
 USE MOD_MPI,                     ONLY: DefineParametersMPI,InitMPI
 USE MOD_Interpolation,           ONLY: DefineParametersInterpolation,InitInterpolation,FinalizeInterpolation
 USE MOD_IO_HDF5,                 ONLY: DefineParametersIO_HDF5,InitIOHDF5,File_ID
@@ -38,16 +38,23 @@ USE MOD_MPI,                     ONLY: InitMPIvars,FinalizeMPI
 #endif
 USE MOD_HDF5_Input,              ONLY: OpenDataFile,CloseDataFile,GetDataProps,ReadAttribute,ReadArray
 USE MOD_Interpolation_Vars,      ONLY: NodeType
-USE MOD_DG_Vars,                 ONLY: U
-USE MOD_FFT,                     ONLY: InitFFT,PerformFFT,FFTOutput,FinalizeFFT,PrimStateAtFFTCoords
-USE MOD_FFT_Vars,                ONLY: ProjectName,Time
+USE MOD_DG_Vars,                 ONLY: U, UPrim_master
+USE MOD_Lifting_Vars,            ONLY: gradUx_master, gradUy_master, gradUz_master
+USE MOD_EOS_Vars,                ONLY: mu0
+USE MOD_WMLES_Vars
+USE MOD_FFT,                     ONLY: InitFFT,PerformFFT,FFTOutput,FinalizeFFT,PrimStateAtFFTCoords,ReadState
+USE MOD_FFT_Vars,                ONLY: ProjectName,Time,Normalize,prmfile,WallBCName,Re_tauReal,u_tau
 ! IMPLICIT VARIABLE HANDLING
 IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-INTEGER                            :: iArg
+INTEGER                            :: iArg,iSide,i,k
 INTEGER                            :: nElems_State,nVar_State,N_State
 CHARACTER(LEN=255)                 :: MeshFile_state,NodeType_State
+INTEGER                            :: nWallSides, MeshModeNorm=1, OppSide
+INTEGER, ALLOCATABLE               :: WallToBCSide(:),WallToBCSide_tmp(:)
+REAL                               :: tauSurf(3,3),GradV(3,3),DivV,rho_w,tau_w
+REAL                               :: tauSurf2
 !===================================================================================================================================
 CALL SetStackSizeUnlimited()
 CALL InitMPI()
@@ -66,6 +73,8 @@ CALL prms%SetSection("channelFFT")
 CALL prms%CreateIntOption( "OutputFormat",  "Choose the main format for output. 0: Tecplot, 2: HDF5")
 CALL prms%CreateIntOption( "NCalc",  "Polynomial degree to perform DFFT on.")
 CALL prms%CreateRealOption("Re_tau", "Reynolds number based on friction velocity and channel half height.")
+CALL prms%CreateLogicalOption("Normalize", "Normalize the mean and fluctuations output with the friction velocity.", ".FALSE.")
+CALL prms%CreateStringOption("WallBCName", "BC Name of the Wall to Compute Shear Stress")
 
 ! check for command line argument --help or --markdown
 IF (doPrintHelp.GT.0) THEN
@@ -78,6 +87,12 @@ IF ((nArgs.LT.1).OR.(.NOT.(STRICMP(GetFileExtension(Args(1)),'ini')))) THEN
 END IF
 ! Parse parameters
 CALL prms%read_options(Args(1))
+
+! Set meshMode according to Normalize option. 
+! If normalization is needed, mesh metrics must be computed
+Normalize = GETLOGICAL('Normalize')
+IF (Normalize) MeshModeNorm=2
+IF (Normalize) WallBCName = GETSTR('WallBCName')
 
 SWRITE(UNIT_stdOut,'(132("="))')
 SWRITE(UNIT_stdOut,'(A)')
@@ -112,11 +127,28 @@ IF (.NOT.STRICMP(NodeType_State,NodeType)) THEN
 END IF
 postiMode=.TRUE.
 CALL InitInterpolation(N_State)
-CALL InitMesh(meshMode=1,MeshFile_IN=MeshFile_state)
+CALL InitMesh(meshMode=MeshModeNorm,MeshFile_IN=MeshFile_state)
 CALL ReadIJKSorting()
 #if USE_MPI
 CALL InitMPIvars()
 #endif
+
+! Now that the mesh has been read, we can populate our wall information
+IF (Normalize) THEN
+! Populate mapping between mesh wall sides and DG sides
+  nWallSides=0
+  ALLOCATE(WallToBCSide_tmp(nBCSides))
+  DO iSide=1,nBCSides
+    IF (STRICMP(BoundaryName(BC(iSide)),WallBCName)) THEN
+      nWallSides = nWallSides + 1
+      WallToBCSide_tmp(nWallSides) = iSide
+    END IF
+  END DO
+  ALLOCATE(WallToBCSide(nWallSides))
+  WallToBCSide(1:nWallSides) = WallToBCSide_tmp(1:nWallSides)
+  DEALLOCATE(WallToBCSide_tmp)
+END IF
+
 CALL InitFFT()
 
 ! Loop over all statefiles
@@ -138,6 +170,63 @@ DO iArg=2,nArgs
   ! Perform actual FFT
   CALL PerformFFT()
 END DO
+
+IF (Normalize) THEN
+  WRITE(*,*) 'NORMALIZE '
+  tauSurf = 0.
+  rho_w = 0.
+  tau_w = 0.
+  tauSurf2 = 0.
+
+  ! Loop over all statefiles
+  DO iArg=2,nArgs
+    ! Read the state and compute gradients.
+    ! We use a copy-and-paste version of this procedure from posti_visu
+    ! The downside is all the colored output from each function; we will deal with this latter. LRP first
+    CALL ReadState(prmfile,Args(iArg),MeshFile_state)
+    
+    ! Calculate shear stress tensor for each point on each wall side and sum them all up
+    DO iSide=1,nWMLESSides
+      DO i=0,PP_N; DO k=0,PP_NZ
+        tau_w = tau_w + WMLES_TauW(1,i,k,nWMLESSides)
+        rho_w = rho_w + UPrim_master(1,i,k,WMLESToBCSide(iSide))
+      END DO; END DO
+    END DO
+    ! DO iSide=1,nWallSides
+    !   WRITE(*,*) WMLES_TauW(1:2,1,1,1)
+    !   CALL Abort(__STAMP__, 'Test done')
+    !   DO i=0,PP_N
+    !   ! DO i=1,N_FFT(1) !<-- used if we interpolate our solution to the FFT grid
+    !     DO k=0,PP_NZ
+    !     ! DO k=1,N_FFT(3) !<-- used if we interpolate our solution to the FFT grid
+    !       GradV(1:3,1) = gradUx_master(2:4,i,k,WallToBCSide(iSide))
+    !       GradV(1:3,2) = gradUy_master(2:4,i,k,WallToBCSide(iSide))
+    !       GradV(1:3,3) = gradUz_master(2:4,i,k,WallToBCSide(iSide))
+    !       DivV = GradV(1,1) + GradV(2,2) + GradV(3,3)
+    !       tauSurf2 =  (mu0*(gradUy_master(2,i,k,WallToBCSide(iSide)) + gradUx_master(3,i,k,WallToBCSide(iSide))))
+    !       tauSurf = tauSurf + mu0*(GradV + TRANSPOSE(GradV))
+    !       tauSurf(1,1) = tauSurf(1,1) - (2./3.)*mu0*DivV
+    !       tauSurf(2,2) = tauSurf(2,2) - (2./3.)*mu0*DivV
+    !       tauSurf(3,3) = tauSurf(3,3) - (2./3.)*mu0*DivV
+          
+    !       !tau_w = tau_w  -1.*DOT_PRODUCT(tauSurf(1,1:3),NormVec(1:3,i,k,0,WallToBCSide(iSide)))
+    !       tau_w = tau_w + tauSurf2!tauSurf(1,2)
+    !       rho_w = rho_w + UPrim_master(1,i,k,WallToBCSide(iSide))
+    !     END DO
+    !   END DO
+    ! END DO
+
+  END DO
+  ! Average tau_w
+  !tauSurf = tauSurf / ((nArgs-1)*PP_N*PP_NZ*nWallSides)
+  tau_w = tau_w / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*nWMLESSides)
+  rho_w = rho_w / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*nWMLESSides)
+  !u_tau = SQRT(tauSurf/rho_w)
+  u_tau = SQRT(tau_w/rho_w)
+  Re_tauReal = 1. / ((mu0/rho_w)/u_tau)
+  WRITE(*,*) "tau_w, rho_w, u_tau, Re_tau: ", tau_w, rho_w, u_tau, Re_tauReal
+
+END IF
 
 ! Do output of results
 CALL FFTOutput()
