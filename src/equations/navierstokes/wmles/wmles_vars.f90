@@ -90,7 +90,7 @@ INTEGER, ALLOCATABLE        :: nTauW_MINE_FacePoint(:), nTauW_MINE_InteriorPoint
                                                                                                       ! that this partition is responsible for calculating/comm.
                                                                                                       ! tau_w values
 
-INTEGER, ALLOCATABLE        :: FaceToLocalPoint(:), InteriorToLocalPoint(:), InterpToLocalPoint(:) ! Mappings between face/interior/interpolation point and
+INTEGER, ALLOCATABLE        :: FaceToLocalPoint(:,:), InteriorToLocalPoint(:,:), InterpToLocalPoint(:,:) ! Mappings between face/interior/interpolation point and
                                                                                                    ! the local points for each MPI proc. that THIS proc. should 
                                                                                                    ! calculate tau_w for
 

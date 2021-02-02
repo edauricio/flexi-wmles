@@ -53,7 +53,7 @@ INTEGER                            :: nElems_State,nVar_State,N_State
 CHARACTER(LEN=255)                 :: MeshFile_state,NodeType_State
 INTEGER                            :: nWallSides, MeshModeNorm=1, OppSide
 INTEGER, ALLOCATABLE               :: WallToBCSide(:),WallToBCSide_tmp(:)
-REAL                               :: tauSurf(3,3),GradV(3,3),DivV,rho_w,tau_w
+REAL                               :: tauSurf(3,3),GradV(3,3),DivV,rho_w,tau_w,sideCnt
 REAL                               :: tauSurf2
 !===================================================================================================================================
 CALL SetStackSizeUnlimited()
@@ -177,6 +177,7 @@ IF (Normalize) THEN
   rho_w = 0.
   tau_w = 0.
   tauSurf2 = 0.
+  sideCnt = 0.
 
   ! Loop over all statefiles
   DO iArg=2,nArgs
@@ -187,10 +188,13 @@ IF (Normalize) THEN
     
     ! Calculate shear stress tensor for each point on each wall side and sum them all up
     DO iSide=1,nWMLESSides
-      DO i=0,PP_N; DO k=0,PP_NZ
-        tau_w = tau_w + WMLES_TauW(1,i,k,nWMLESSides)
-        rho_w = rho_w + UPrim_master(1,i,k,WMLESToBCSide(iSide))
-      END DO; END DO
+      IF (STRICMP(BoundaryName(BC(WMLESToBCSide(iSide))),WallBCName)) THEN
+        IF (iArg.EQ.2) sideCnt = sideCnt + 1
+        DO i=0,PP_N; DO k=0,PP_NZ
+          tau_w = tau_w + WMLES_TauW(1,i,k,nWMLESSides)
+          rho_w = rho_w + UPrim_master(1,i,k,WMLESToBCSide(iSide))
+        END DO; END DO
+      END IF
     END DO
     ! DO iSide=1,nWallSides
     !   WRITE(*,*) WMLES_TauW(1:2,1,1,1)
@@ -219,8 +223,10 @@ IF (Normalize) THEN
   END DO
   ! Average tau_w
   !tauSurf = tauSurf / ((nArgs-1)*PP_N*PP_NZ*nWallSides)
-  tau_w = tau_w / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*nWMLESSides)
-  rho_w = rho_w / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*nWMLESSides)
+  !tau_w = tau_w / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*nWMLESSides)
+  !rho_w = rho_w / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*nWMLESSides)
+  tau_w = ABS(tau_w) / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*sideCnt)
+  rho_w = rho_w / ((nArgs-1)*(PP_N+1)*(PP_NZ+1)*sideCnt)
   !u_tau = SQRT(tauSurf/rho_w)
   u_tau = SQRT(tau_w/rho_w)
   Re_tauReal = 1. / ((mu0/rho_w)/u_tau)
