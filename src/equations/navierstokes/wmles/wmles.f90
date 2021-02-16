@@ -215,7 +215,7 @@ DO iSide=1,nBCSides
                 ELSE
                     ! Use the ElemInfo already in memory from mesh read-in
                     ! OthersElemInfo = ElemInfo
-                    OthersElemInfo = ElemInfo(:,Glob_hwmElemID)
+                    OthersElemInfo(1:6) = ElemInfo(1:6,Glob_hwmElemID)
                 END IF
 
                 SDEALLOCATE(OthersSideInfo)
@@ -234,7 +234,7 @@ DO iSide=1,nBCSides
                 ELSE
                     ! Use the SideInfo already in memory from mesh read-in
                     ! OthersSideInfo = SideInfo
-                    OthersSideInfo = SideInfo(:,FirstSideInd:LastSideInd)
+                    OthersSideInfo(:,FirstSideInd:LastSideInd) = SideInfo(:,FirstSideInd:LastSideInd)
                 END IF
 
                 ! Scan the list of sides looking for a side with the Ind = GlobalOppSideID
@@ -265,7 +265,7 @@ DO iSide=1,nBCSides
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,NGeo,0)
                     OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,NGeo)
                     ! Compute the vector to check node approximation tolerance
-                    TolVec = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
+                    TolVec(:) = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (ETA_PLUS)
                     ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ETA_MINUS
                     InnerOppSideID = OthersElemInfo(3) + ETA_MINUS
@@ -274,7 +274,7 @@ DO iSide=1,nBCSides
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,0,NGeo)
                     OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,0,NGeo)
                     ! Compute the vector to check node approximation tolerance
-                    TolVec = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
+                    TolVec(:) = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (XI_MINUS)
                     ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_PLUS
                     InnerOppSideID = OthersElemInfo(3) + XI_PLUS
@@ -283,7 +283,7 @@ DO iSide=1,nBCSides
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,0,NGeo)
                     OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,NGeo)
                     ! Compute the vector to check node approximation tolerance
-                    TolVec = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
+                    TolVec(:) = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (XI_PLUS)
                     ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_MINUS
                     InnerOppSideID = OthersElemInfo(3) + XI_MINUS
@@ -292,7 +292,7 @@ DO iSide=1,nBCSides
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,NGeo,0)
                     OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,0,NGeo,NGeo)
                     ! Compute the vector to check node approximation tolerance
-                    TolVec = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
+                    TolVec(:) = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (ZETA_MINUS)
                     ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_PLUS
                     InnerOppSideID = OthersElemInfo(3) + ZETA_PLUS
@@ -301,7 +301,7 @@ DO iSide=1,nBCSides
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,NGeo,NGeo)
                     OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,NGeo)
                     ! Compute the vector to check node approximation tolerance
-                    TolVec = hwmElem_NodeCoords(:,0,0,NGeo) - hwmElem_NodeCoords(:,0,0,0)
+                    TolVec(:) = hwmElem_NodeCoords(:,0,0,NGeo) - hwmElem_NodeCoords(:,0,0,0)
                 CASE (ZETA_PLUS)
                     ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_MINUS
                     InnerOppSideID = OthersElemInfo(3) + ZETA_MINUS
@@ -310,7 +310,7 @@ DO iSide=1,nBCSides
                     OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,0,0)
                     OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,0)
                     ! Compute the vector to check node approximation tolerance
-                    TolVec = hwmElem_NodeCoords(:,0,0,NGeo) - hwmElem_NodeCoords(:,0,0,0)
+                    TolVec(:) = hwmElem_NodeCoords(:,0,0,NGeo) - hwmElem_NodeCoords(:,0,0,0)
                 END SELECT
 
                 GlobalOppSideID = ABS(OthersSideInfo(2,InnerOppSideID))
@@ -366,7 +366,7 @@ DO iSide=1,nBCSides
             END DO ! do while
 
             ! Found h_wm element for this p,q face point
-            LOGWRITE(*,'(2(I4,2X),(I15,2X))') p, q, Glob_hwmElemID, ELEMIPROC(Glob_hwmElemID)
+            LOGWRITE(*,'((A11,2x),4(I4,2X))') "hwmElemInfo", p, q, Glob_hwmElemID, ELEMIPROC(Glob_hwmElemID)
 
             hwmRank = ELEMIPROC(Glob_hwmElemID)
             WallStressCount_local(hwmRank) = WallStressCount_local(hwmRank) + 1
@@ -517,7 +517,7 @@ DO i=0,nProcs_SendTauW
         IF (nTauW_MINE(0).NE.0) PointInfo(:,1:WallStressCount_local(myRank)) = OthersPointInfo(:,1:WallStressCount_local(myRank),myRank)
     END IF
 
-    ! Store wall-normal vector
+    ! Store inward wall-normal vector
     IF (nTauW_MINE(i).NE.0) TauW_MINE_NormVec(1:3,1:nTauW_MINE(i),i) = PointInfo(4:6,1:nTauW_MINE(i))
     
     DO j=1,nTauW_MINE(i)
@@ -564,13 +564,12 @@ DO i=0,nProcs_SendTauW
                 IF (FoundhwmPoint) EXIT
                 DO p=0,PP_N
                     IF (FoundhwmPoint) EXIT
-                    DistanceVect(:) = PointInfo(1:3,j) - Elem_xGP(:,p,q,r,Loc_hwmElemID)
+                    DistanceVect(:) = PointInfo(1:3,j) - Elem_xGP(1:3,p,q,r,Loc_hwmElemID)
                     Distance = 0
                     DO k=1,3
                         Distance = Distance + DistanceVect(k)**2
                     END DO
                     Distance = SQRT(Distance)
-                    ! Tolerance has been set in the previous loop, we stick to it
                     IF (Distance .LE. WMLES_Tol) THEN ! May be approximated by this point
                         IF (Logging) TauW_MINE_IsInterior(j,i) = .TRUE.
                         nTauW_MINE_InteriorPoint(i) = nTauW_MINE_InteriorPoint(i) + 1
@@ -601,7 +600,7 @@ DO i=0,nProcs_SendTauW
 END DO ! i -- message from each process having a BC side which needs our calculation of tau_w
 
 ! Check if there are interpolation points to calculate in this MPI proc., so that we set up
-! and store the Lagrange polynomials calculate at each point
+! and store the Lagrange polynomials calculated at each point
 IF (MAXVAL(nTauW_MINE_Interpolate).GT.0) THEN 
     ! Set up the Lagrangian interpolating polynomials for each interp. node.
     ALLOCATE(Lag_xi(0:PP_N,MAXVAL(nTauW_MINE_Interpolate),0:nProcs_SendTauW))
@@ -617,12 +616,6 @@ IF (MAXVAL(nTauW_MINE_Interpolate).GT.0) THEN
 END IF
 
 !> Set up variables for MPI and actual TauW values 
-! IF (nWMLESSides .NE. 0) ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
-! IF (nProcs_SendTauW .NE. 0) ALLOCATE(TauW_MINE(2,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-! IF (nProcs_RecvTauW .NE. 0) THEN
-!     ALLOCATE(TauW_YOURS(2,MAXVAL(WallStressCount_local),nProcs_RecvTauW))
-!     ALLOCATE(WMLES_Requests(nProcs_RecvTauW))
-! END IF
 ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
 ALLOCATE(TauW_MINE(2,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
 ALLOCATE(TauW_YOURS(2,MAXVAL(WallStressCount_local),0:nProcs_RecvTauW))
@@ -674,7 +667,7 @@ SDEALLOCATE(PointInfo)
 ! During the calculation (ComputeWallStress), each proc will run a loop from
 ! i = 1,nProcs_SendTauW and within that from j = 1,nTauW_MINE(i) so that it calculates
 ! the points for MPI proc. 'i' one by one, and put it in an ordered array of 
-! TauW_MINE_Send(1:2,nTauW_MINE(i)). Then, communicate this result to the proc. that imposes the BC,
+! TauW_MINE(1:2,nTauW_MINE(i),i). Then, communicate this result to the proc. that imposes the BC,
 ! i.e., proc. 'i'.
 ! Then, proc 'i' receives this info and maps it to the actual WMLES array TauW(1:2,p,q,nWMLESSide)
 ! using the info on TauW_Proc array, which contains info on p, q, and WMLES Side, and the MPI proc.

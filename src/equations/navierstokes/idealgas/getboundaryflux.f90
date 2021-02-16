@@ -371,7 +371,7 @@ CASE(3,4,5,9,91,23,24,25,27)
       ! Set pressure by solving local Riemann problem
       UPrim_boundary(5,p,q) = PRESSURE_RIEMANN(UPrim_boundary(:,p,q))
       ! Velocity is slip in tangential directions, so the same tangential components for both ghost and element states
-      UPrim_boundary(2,p,q) = -UPrim_boundary(2,p,q) ! Normal component of the boundary (ghost) state is set to the negative of the element normal velocity
+      UPrim_boundary(2,p,q) = 0. ! slip in tangential directions (NOTE: The result from this subroutine is only used for the Lifting procedure; in the fluxes calculations we actually calculate it over again.)
       ! Referring to Toro: Riemann Solvers and Numerical Methods for Fluid Dynamics (Chapter 6.3.3 Boundary Conditions)
       ! the density is chosen from the inside
       UPrim_boundary(1,p,q) = UPrim_master(1,p,q) ! density from inside
