@@ -530,56 +530,56 @@ DO i=0,nProcs_SendTauW
 
         FoundhwmPoint = .FALSE.
         ! Start from faces
-        DO LocSide=1,6
-            IF (FoundhwmPoint) EXIT
+        ! DO LocSide=1,6
+        !     IF (FoundhwmPoint) EXIT
 
-            SideID = ElemToSide(E2S_SIDE_ID, LocSide, Loc_hwmElemID)
-            CALL GetOppositeSide(SideID, Loc_hwmElemID, OppSideID)
-            DO q=0,PP_NZ
-                IF (FoundhwmPoint) EXIT
-                DO p=0,PP_N
-                    IF (FoundhwmPoint) EXIT
-                    DistanceVect = PointInfo(1:3,j) - Face_xGP(1:3,p,q,0,SideID)
-                    Distance = 0.
-                    DO k=1,3
-                        Distance = Distance + DistanceVect(k)**2
-                    END DO
-                    Distance = SQRT(Distance)
-                    IF (Distance .LE. WMLES_Tol) THEN ! May be approximated by this point, in this face
-                        IF (Logging) TauW_MINE_IsFace(j,i) = .TRUE.
-                        nTauW_MINE_FacePoint(i) = nTauW_MINE_FacePoint(i) + 1
-                        FaceToLocalPoint(nTauW_MINE_FacePoint(i),i) = j
-                        TauW_MINE_FacePoint(:,nTauW_MINE_FacePoint(i),i) = (/p,q,SideID/)
-                        FoundhwmPoint = .TRUE.
-                    END IF
-                END DO ! p
-            END DO ! q
-        END DO ! LocSide
+        !     SideID = ElemToSide(E2S_SIDE_ID, LocSide, Loc_hwmElemID)
+        !     CALL GetOppositeSide(SideID, Loc_hwmElemID, OppSideID)
+        !     DO q=0,PP_NZ
+        !         IF (FoundhwmPoint) EXIT
+        !         DO p=0,PP_N
+        !             IF (FoundhwmPoint) EXIT
+        !             DistanceVect = PointInfo(1:3,j) - Face_xGP(1:3,p,q,0,SideID)
+        !             Distance = 0.
+        !             DO k=1,3
+        !                 Distance = Distance + DistanceVect(k)**2
+        !             END DO
+        !             Distance = SQRT(Distance)
+        !             IF (Distance .LE. WMLES_Tol) THEN ! May be approximated by this point, in this face
+        !                 IF (Logging) TauW_MINE_IsFace(j,i) = .TRUE.
+        !                 nTauW_MINE_FacePoint(i) = nTauW_MINE_FacePoint(i) + 1
+        !                 FaceToLocalPoint(nTauW_MINE_FacePoint(i),i) = j
+        !                 TauW_MINE_FacePoint(:,nTauW_MINE_FacePoint(i),i) = (/p,q,SideID/)
+        !                 FoundhwmPoint = .TRUE.
+        !             END IF
+        !         END DO ! p
+        !     END DO ! q
+        ! END DO ! LocSide
 
         ! If the point could not be approximated by a face point, 
         ! then check within the element
-        DO r=0,PP_NZ
-            IF (FoundhwmPoint) EXIT
-            DO q=0,PP_N
-                IF (FoundhwmPoint) EXIT
-                DO p=0,PP_N
-                    IF (FoundhwmPoint) EXIT
-                    DistanceVect(:) = PointInfo(1:3,j) - Elem_xGP(1:3,p,q,r,Loc_hwmElemID)
-                    Distance = 0
-                    DO k=1,3
-                        Distance = Distance + DistanceVect(k)**2
-                    END DO
-                    Distance = SQRT(Distance)
-                    IF (Distance .LE. WMLES_Tol) THEN ! May be approximated by this point
-                        IF (Logging) TauW_MINE_IsInterior(j,i) = .TRUE.
-                        nTauW_MINE_InteriorPoint(i) = nTauW_MINE_InteriorPoint(i) + 1
-                        InteriorToLocalPoint(nTauW_MINE_InteriorPoint(i),i) = j
-                        TauW_MINE_InteriorPoint(:,nTauW_MINE_InteriorPoint(i),i) = (/p,q,r,Loc_hwmElemID/)
-                        FoundhwmPoint = .TRUE.
-                    END IF
-                END DO ! p
-            END DO ! q
-        END DO ! r
+        ! DO r=0,PP_NZ
+        !     IF (FoundhwmPoint) EXIT
+        !     DO q=0,PP_N
+        !         IF (FoundhwmPoint) EXIT
+        !         DO p=0,PP_N
+        !             IF (FoundhwmPoint) EXIT
+        !             DistanceVect(:) = PointInfo(1:3,j) - Elem_xGP(1:3,p,q,r,Loc_hwmElemID)
+        !             Distance = 0
+        !             DO k=1,3
+        !                 Distance = Distance + DistanceVect(k)**2
+        !             END DO
+        !             Distance = SQRT(Distance)
+        !             IF (Distance .LE. WMLES_Tol) THEN ! May be approximated by this point
+        !                 IF (Logging) TauW_MINE_IsInterior(j,i) = .TRUE.
+        !                 nTauW_MINE_InteriorPoint(i) = nTauW_MINE_InteriorPoint(i) + 1
+        !                 InteriorToLocalPoint(nTauW_MINE_InteriorPoint(i),i) = j
+        !                 TauW_MINE_InteriorPoint(:,nTauW_MINE_InteriorPoint(i),i) = (/p,q,r,Loc_hwmElemID/)
+        !                 FoundhwmPoint = .TRUE.
+        !             END IF
+        !         END DO ! p
+        !     END DO ! q
+        ! END DO ! r
 
         ! If the point may not be approximated neither by a face nor an interior point,
         ! then we must interpolate.
