@@ -43,13 +43,16 @@ REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! Second and third indices: indices "i,j" of the BC face
                                                    ! Fourth index: WMLES Side
 
-INTEGER                     :: nWMLESSides ! Number of WMLES BC Sides                                                   
+INTEGER                     :: nWMLESSides, nMasterWMLESSide, nSlaveWMLESSide ! Number of WMLES BC Sides                                                   
 INTEGER,ALLOCATABLE         :: BCSideToWMLES(:) ! Mapping between WMLES BC Side and Mesh BCSide.
                                            ! Usage: BCSideToWMLES(SideID), SideID \in [1:nBCSides]
                                            ! OUTPUT: [1:nWMLESSides]
 INTEGER,ALLOCATABLE         :: WMLESToBCSide(:) ! Inverse of BCSideToWMLES mapping, that is,
                                                 ! get SideID of BC from WMLESSideID
-
+INTEGER,ALLOCATABLE         :: MasterToWMLESSide(:), SlaveToWMLESSide(:) ! Mapping between master/slave opposite sides and the boundary
+                                                                         ! sides in terms of nWMLESSide number.
+INTEGER,ALLOCATABLE         :: MasterToOppSide(:), SlaveToOppSide(:) ! Mapping between master/slave sides, in terms of nMaster/SlaveWMLESSides,
+                                                                     ! and the OppSide in terms of "SideID"
 LOGICAL                     :: WMLESInitDone = .FALSE.
 
 #if USE_MPI

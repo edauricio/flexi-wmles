@@ -117,7 +117,7 @@ IMPLICIT NONE
 CHARACTER(LEN=255)       :: massFlowBCName
 INTEGER                  :: ioUnit,openStat,i
 REAL                     :: maxMemory
-CHARACTER(LEN=20)        :: varnames(4)
+CHARACTER(LEN=20)        :: varnames(5)
 !==================================================================================================================================
 SWRITE(UNIT_StdOut,'(132("-"))')
 SWRITE(UNIT_stdOut,'(A)') ' INIT TESTCASE PERIODIC HILL...'
@@ -144,8 +144,9 @@ IF(.NOT.MPIRoot) RETURN
 Filename = TRIM(ProjectName)//'_Stats'
 varnames(1) = 'dpdx'
 varnames(2) = 'bulkVel'
-varnames(3) = 'massFlowRateGlobal'
-varnames(4) = 'massFlowRatePeriodic'
+varnames(3) = 'inflowBulkVel'
+varnames(4) = 'massFlowRateGlobal'
+varnames(5) = 'massFlowRatePeriodic'
 CALL InitOutputToFile(Filename,'Statistics',4,varnames)
 
 SWRITE(UNIT_stdOut,'(A)')' INIT TESTCASE PERIODIC HILL DONE!'
@@ -245,7 +246,7 @@ REAL,INTENT(IN)                 :: dt                     !< current time step
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 INTEGER                         :: i,j,k,iElem,SideID
-REAL                            :: massFlow,massFlowGlobal,massFlowPeriodic,tmp
+REAL                            :: massFlow,massFlowGlobal,massFlowPeriodic,tmp,inflowBulkVel
 #if USE_MPI
 REAL                            :: box(3)
 #endif
@@ -253,6 +254,7 @@ REAL                            :: box(3)
 massFlowGlobal=0.
 massFlowPeriodic=0.
 BulkVel =0.
+inflowBulkVel = 0.
 ! Periodic hill testcase
 ! 1. Get Massflux at the periodic inlet (hill crest)
 DO SideID=1,nSides-nMPISides_YOUR
@@ -260,6 +262,7 @@ DO SideID=1,nSides-nMPISides_YOUR
   DO j=0,PP_N; DO i=0,PP_N
     tmp     =0.5*wGPSurf(i,j)*SurfElem(i,j,0,SideID)
     massFlowPeriodic=massFlowPeriodic+(U_master(2,i,j,SideID)+U_slave(2,i,j,SideID))*tmp
+    inflowBulkVel=inflowBulkVel+((U_master(2,i,j,SideID)/U_master(1,i,j,SideID))+(U_slave(2,i,j,SideID)/U_slave(1,i,j,SideID)))*tmp
   END DO; END DO
 END DO
 
@@ -303,11 +306,11 @@ dtPrev       = dt
 IF(MPIRoot)THEN
   IF(.NOT.ALLOCATED(writeBuf))THEN
     Buffer = MIN(CEILING((2.0*WriteData_dt)/dt),MaxBuffer) ! use 2x security
-    ALLOCATE(writeBuf(5,buffer))
+    ALLOCATE(writeBuf(6,buffer))
     SWRITE(*,*) 'Buffer for massflow logging is ', buffer
   END IF
   ioCounter=ioCounter+1
-  writeBuf(:,ioCounter) = (/t, dpdx, BulkVel, MassFlowGlobal, MassFlowPeriodic /)
+  writeBuf(:,ioCounter) = (/t, dpdx, BulkVel, inflowBulkVel, MassFlowGlobal, MassFlowPeriodic /)
   IF((ioCounter.GE.buffer).OR.((tWriteData-t-dt).LT.1e-10))THEN
     CALL WriteStats()
   END IF

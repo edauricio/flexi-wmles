@@ -4,6 +4,14 @@
 		"selected_items":
 		[
 			[
+				"BcSide",
+				"BCSideToWMLES"
+			],
+			[
+				"MasterToOpp",
+				"MasterToOppSide"
+			],
+			[
 				"OtherElem",
 				"OthersElemInfo"
 			],
@@ -388,7 +396,7 @@
 			"file": "equations/navierstokes/wmles/wmles.f90",
 			"settings":
 			{
-				"buffer_size": 87282,
+				"buffer_size": 31482,
 				"encoding": "UTF-8",
 				"line_ending": "Unix"
 			}
@@ -397,7 +405,7 @@
 			"file": "equations/navierstokes/wmles/wmles_vars.f90",
 			"settings":
 			{
-				"buffer_size": 10249,
+				"buffer_size": 10783,
 				"encoding": "UTF-8",
 				"line_ending": "Unix"
 			}
@@ -899,7 +907,7 @@
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/readintools",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/recordpoints",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/testcase",
-		"/home/eron/Workspace/CFD/Flexi/flexi/src/testcase/default",
+		"/home/eron/Workspace/CFD/Flexi/flexi/src/testcase/phill",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/timedisc",
 		"/home/eron/Workspace/CFD/Flexi/flexi/posti",
 		"/home/eron/Workspace/CFD/Flexi/flexi/posti/channel_fft",
@@ -907,6 +915,8 @@
 	],
 	"file_history":
 	[
+		"/home/eron/Workspace/CFD/Flexi/flexi/src/testcase/phill/testcase_vars.f90",
+		"/home/eron/Workspace/CFD/Flexi/flexi/src/testcase/phill/testcase.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/navierstokes/eddyVisc/eddyVisc.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/output/output_vars.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/navierstokes/idealgas/viscosity.f90",
@@ -973,7 +983,6 @@
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/readintools/stringtools.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/linearscalaradvection/flux.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/linearscalaradvection/equation_vars.f90",
-		"/home/eron/Workspace/CFD/Flexi/flexi/src/testcase/phill/testcase.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/navierstokes/wmles/wmles.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/mesh/mesh.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/mesh/mappings.f90",
@@ -1018,7 +1027,7 @@
 	],
 	"find":
 	{
-		"height": 26.0
+		"height": 39.0
 	},
 	"find_in_files":
 	{
@@ -1032,6 +1041,22 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"CALL Write",
+			"Write",
+			"Master",
+			"ALLOCATE",
+			"WMLES_TauW",
+			"Face_xGP",
+			"Master",
+			"UPrim_Slave",
+			"Master",
+			"master",
+			"Master",
+			"master",
+			"Master",
+			"WMLESSide",
+			"Master",
+			"IntPInd",
 			"TolVec",
 			"WRITE",
 			"FaceToLocal",
@@ -1143,23 +1168,7 @@
 			"nBCs",
 			"nSides",
 			"nBCs",
-			"nbcs",
-			"commCnt",
-			"OppositeSideID",
-			"WallSideID",
-			"Request",
-			"Found",
-			"found",
-			"Found",
-			"OR",
-			"FUNCTION",
-			"SideID",
-			"OppSideID",
-			"ElemID",
-			"hwmElemID",
-			"ELSE",
-			"WElemID",
-			"Elem_xGP"
+			"nbcs"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -1205,7 +1214,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 50,
+					"stack_index": 51,
 					"type": "text"
 				},
 				{
@@ -1232,10 +1241,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 2130.0,
+						"translation.y": 2844.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 49,
+					"stack_index": 18,
 					"type": "text"
 				},
 				{
@@ -1263,7 +1272,7 @@
 						"translation.y": 906.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 18,
+					"stack_index": 14,
 					"type": "text"
 				},
 				{
@@ -1293,13 +1302,13 @@
 						"translation.y": 102.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 19,
+					"stack_index": 26,
 					"type": "text"
 				}
 			]
 		},
 		{
-			"selected": 18,
+			"selected": 47,
 			"sheets":
 			[
 				{
@@ -1308,15 +1317,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 87282,
+						"buffer_size": 31482,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								59454,
-								59454
+								19318,
+								19318
 							]
 						],
 						"settings":
@@ -1326,7 +1335,7 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 18790.0,
+						"translation.y": 5614.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 4,
@@ -1338,15 +1347,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 10249,
+						"buffer_size": 10783,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								4063,
-								4063
+								3047,
+								3047
 							]
 						],
 						"settings":
@@ -1356,10 +1365,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 709.0,
+						"translation.y": 454.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 7,
+					"stack_index": 10,
 					"type": "text"
 				},
 				{
@@ -1389,7 +1398,7 @@
 						"translation.y": 3405.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 21,
+					"stack_index": 28,
 					"type": "text"
 				},
 				{
@@ -1419,7 +1428,7 @@
 						"translation.y": 8919.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 33,
+					"stack_index": 38,
 					"type": "text"
 				},
 				{
@@ -1449,7 +1458,7 @@
 						"translation.y": 7434.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 20,
+					"stack_index": 27,
 					"type": "text"
 				},
 				{
@@ -1479,7 +1488,7 @@
 						"translation.y": 1153.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 25,
+					"stack_index": 32,
 					"type": "text"
 				},
 				{
@@ -1509,7 +1518,7 @@
 						"translation.y": 8219.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 24,
+					"stack_index": 31,
 					"type": "text"
 				},
 				{
@@ -1539,7 +1548,7 @@
 						"translation.y": 2300.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 26,
+					"stack_index": 33,
 					"type": "text"
 				},
 				{
@@ -1569,7 +1578,7 @@
 						"translation.y": 3468.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 36,
+					"stack_index": 41,
 					"type": "text"
 				},
 				{
@@ -1585,8 +1594,8 @@
 						"selection":
 						[
 							[
-								8663,
-								8663
+								11161,
+								11161
 							]
 						],
 						"settings":
@@ -1595,11 +1604,11 @@
 							"tab_size": 2,
 							"translate_tabs_to_spaces": true
 						},
-						"translation.x": 176.0,
-						"translation.y": 3119.0,
+						"translation.x": 0.0,
+						"translation.y": 4510.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 17,
+					"stack_index": 1,
 					"type": "text"
 				},
 				{
@@ -1629,7 +1638,7 @@
 						"translation.y": 252.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 27,
+					"stack_index": 34,
 					"type": "text"
 				},
 				{
@@ -1659,7 +1668,7 @@
 						"translation.y": 9454.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 23,
+					"stack_index": 30,
 					"type": "text"
 				},
 				{
@@ -1689,7 +1698,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 29,
+					"stack_index": 35,
 					"type": "text"
 				},
 				{
@@ -1717,7 +1726,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 22,
+					"stack_index": 29,
 					"type": "text"
 				},
 				{
@@ -1747,7 +1756,7 @@
 						"translation.y": 7038.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 41,
+					"stack_index": 46,
 					"type": "text"
 				},
 				{
@@ -1763,8 +1772,8 @@
 						"selection":
 						[
 							[
-								27541,
-								27541
+								30591,
+								30591
 							]
 						],
 						"settings":
@@ -1774,10 +1783,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 7247.0,
+						"translation.y": 5188.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 3,
+					"stack_index": 15,
 					"type": "text"
 				},
 				{
@@ -1807,7 +1816,7 @@
 						"translation.y": 714.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 35,
+					"stack_index": 40,
 					"type": "text"
 				},
 				{
@@ -1837,7 +1846,7 @@
 						"translation.y": 2130.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 6,
+					"stack_index": 22,
 					"type": "text"
 				},
 				{
@@ -1853,8 +1862,8 @@
 						"selection":
 						[
 							[
-								17282,
-								17282
+								17631,
+								17631
 							]
 						],
 						"settings":
@@ -1864,10 +1873,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 5734.0,
+						"translation.y": 10629.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 0,
+					"stack_index": 5,
 					"type": "text"
 				},
 				{
@@ -1897,7 +1906,7 @@
 						"translation.y": 5734.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 52,
+					"stack_index": 53,
 					"type": "text"
 				},
 				{
@@ -1927,7 +1936,7 @@
 						"translation.y": 4512.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 5,
+					"stack_index": 21,
 					"type": "text"
 				},
 				{
@@ -1955,7 +1964,7 @@
 						"translation.y": 923.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 37,
+					"stack_index": 42,
 					"type": "text"
 				},
 				{
@@ -1971,8 +1980,8 @@
 						"selection":
 						[
 							[
-								13845,
-								13845
+								5920,
+								5920
 							]
 						],
 						"settings":
@@ -1982,10 +1991,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 4803.0,
+						"translation.y": 1746.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 28,
+					"stack_index": 17,
 					"type": "text"
 				},
 				{
@@ -2001,8 +2010,8 @@
 						"selection":
 						[
 							[
-								2874,
-								2874
+								17094,
+								17094
 							]
 						],
 						"settings":
@@ -2012,10 +2021,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 600.0,
+						"translation.y": 5241.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 32,
+					"stack_index": 6,
 					"type": "text"
 				},
 				{
@@ -2043,7 +2052,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 31,
+					"stack_index": 37,
 					"type": "text"
 				},
 				{
@@ -2059,8 +2068,8 @@
 						"selection":
 						[
 							[
-								14167,
-								14167
+								15863,
+								15863
 							]
 						],
 						"settings":
@@ -2070,10 +2079,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 5176.0,
+						"translation.y": 5754.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 42,
+					"stack_index": 3,
 					"type": "text"
 				},
 				{
@@ -2103,7 +2112,7 @@
 						"translation.y": 957.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 47,
+					"stack_index": 49,
 					"type": "text"
 				},
 				{
@@ -2133,7 +2142,7 @@
 						"translation.y": 1344.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 48,
+					"stack_index": 50,
 					"type": "text"
 				},
 				{
@@ -2163,7 +2172,7 @@
 						"translation.y": 3221.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 46,
+					"stack_index": 48,
 					"type": "text"
 				},
 				{
@@ -2193,7 +2202,7 @@
 						"translation.y": 8787.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 15,
+					"stack_index": 25,
 					"type": "text"
 				},
 				{
@@ -2209,8 +2218,8 @@
 						"selection":
 						[
 							[
-								6445,
-								6445
+								9748,
+								9748
 							]
 						],
 						"settings":
@@ -2220,10 +2229,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 1637.0,
+						"translation.y": 3269.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 45,
+					"stack_index": 16,
 					"type": "text"
 				},
 				{
@@ -2253,7 +2262,7 @@
 						"translation.y": 17404.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 34,
+					"stack_index": 39,
 					"type": "text"
 				},
 				{
@@ -2283,7 +2292,7 @@
 						"translation.y": 6797.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 39,
+					"stack_index": 44,
 					"type": "text"
 				},
 				{
@@ -2313,7 +2322,7 @@
 						"translation.y": 3677.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 2,
+					"stack_index": 20,
 					"type": "text"
 				},
 				{
@@ -2341,7 +2350,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 30,
+					"stack_index": 36,
 					"type": "text"
 				},
 				{
@@ -2371,7 +2380,7 @@
 						"translation.y": 549.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 38,
+					"stack_index": 43,
 					"type": "text"
 				},
 				{
@@ -2401,7 +2410,7 @@
 						"translation.y": 838.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 53,
+					"stack_index": 54,
 					"type": "text"
 				},
 				{
@@ -2431,7 +2440,7 @@
 						"translation.y": 1960.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 1,
+					"stack_index": 19,
 					"type": "text"
 				},
 				{
@@ -2461,7 +2470,7 @@
 						"translation.y": 872.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 40,
+					"stack_index": 45,
 					"type": "text"
 				},
 				{
@@ -2489,7 +2498,7 @@
 						"translation.y": 306.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 12,
+					"stack_index": 24,
 					"type": "text"
 				},
 				{
@@ -2516,10 +2525,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 2954.0,
+						"translation.y": 16.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 10,
+					"stack_index": 12,
 					"type": "text"
 				},
 				{
@@ -2546,10 +2555,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 354.0,
+						"translation.y": 102.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 11,
+					"stack_index": 13,
 					"type": "text"
 				},
 				{
@@ -2579,7 +2588,7 @@
 						"translation.y": 7436.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 9,
+					"stack_index": 23,
 					"type": "text"
 				},
 				{
@@ -2609,7 +2618,7 @@
 						"translation.y": 205.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 8,
+					"stack_index": 11,
 					"type": "text"
 				},
 				{
@@ -2639,7 +2648,7 @@
 						"translation.y": 9563.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 54,
+					"stack_index": 55,
 					"type": "text"
 				},
 				{
@@ -2669,7 +2678,7 @@
 						"translation.y": 2104.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 55,
+					"stack_index": 56,
 					"type": "text"
 				},
 				{
@@ -2699,7 +2708,7 @@
 						"translation.y": 10171.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 16,
+					"stack_index": 2,
 					"type": "text"
 				},
 				{
@@ -2715,8 +2724,8 @@
 						"selection":
 						[
 							[
-								12313,
-								12313
+								9810,
+								9810
 							]
 						],
 						"settings":
@@ -2726,10 +2735,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 4434.0,
+						"translation.y": 2878.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 56,
+					"stack_index": 0,
 					"type": "text"
 				},
 				{
@@ -2759,7 +2768,7 @@
 						"translation.y": 923.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 51,
+					"stack_index": 52,
 					"type": "text"
 				},
 				{
@@ -2786,10 +2795,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 1793.0,
+						"translation.y": 1028.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 14,
+					"stack_index": 9,
 					"type": "text"
 				},
 				{
@@ -2817,7 +2826,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 44,
+					"stack_index": 47,
 					"type": "text"
 				},
 				{
@@ -2833,8 +2842,8 @@
 						"selection":
 						[
 							[
-								3447,
-								3447
+								10532,
+								10532
 							]
 						],
 						"settings":
@@ -2844,10 +2853,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 2058.0,
+						"translation.y": 3514.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 13,
+					"stack_index": 7,
 					"type": "text"
 				},
 				{
@@ -2875,7 +2884,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 43,
+					"stack_index": 8,
 					"type": "text"
 				}
 			]
