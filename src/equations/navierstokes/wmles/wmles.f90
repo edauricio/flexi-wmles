@@ -170,12 +170,20 @@ nMasterWMLESSide = 0
 nSlaveWMLESSide = 0
 BCSideToWMLES = 0
 WMLESToBCSide_tmp = 0
+MasterToWMLESSide_tmp = 0
+MasterToOppSide_tmp = 0
+SlaveToWMLESSide_tmp = 0
+SlaveToOppSide_tmp = 0
 TauW_Proc_tmp = -1
 OthersPointInfo(7,:,:) = -1
 WallStressCount_local = 0
 WallStressCount = 0
 WMLES_Tol = 1.E6
 
+
+! TODO: When dealing with a slave MPI SIDE, the MPI proc. won't have uprim_master info.
+! Hence, we need to comunicate this, before this loop. This can be done before the call to
+! ComputeWallStress in main dg.f90 subroutine.
 DO iSide=1,nBCSides
     IF (BoundaryType(BC(iSide),BC_TYPE) .EQ. 5) THEN ! WMLES side
 
@@ -186,21 +194,31 @@ DO iSide=1,nBCSides
         WallElemID = SideToElem(S2E_ELEM_ID, iSide)
         CALL GetOppositeSide(iSide, WallElemID, OppSideID)
 
-        IF (SideToElem(S2E_ELEM_ID, OppSideID) .EQ. WallElemID) THEN 
-            ! WallElem is master of opposite side
-            ! So we use the info from slave, i.e., the element just above WallElem
+        IF (SideToElem(S2E_ELEM_ID, OppSideID) .NE. -1) THEN 
+            IF (SideToElem(S2E_ELEM_ID, OppSideID) .EQ. WallElemID) THEN
+                ! WallElem is master of opposite side
+                ! So we use the info from slave, i.e., the element just above WallElem
+                nSlaveWMLESSide = nSlaveWMLESSide + 1
+                SlaveToWMLESSide_tmp(nSlaveWMLESSide) = nWMLESSides
+                SlaveToOppSide_tmp(nSlaveWMLESSide) = OppSideID
+            ELSE
+                ! Otherwise, if WallElem is slave, we use the master info, i.e.,
+                ! coming from the element just above WallElem
+                nMasterWMLESSide = nMasterWMLESSide + 1
+                MasterToWMLESSide_tmp(nMasterWMLESSide) = nWMLESSides
+                MasterToOppSide_tmp(nMasterWMLESSide) = OppSideID
+            END IF
+        ELSE
+            ! WallElem is slave of this side, but this is an MPI side.
+            ! Hence, it won't have the master info. Use the slave (wallElem) info anyway...
+            ! (Read TODO above)
             nSlaveWMLESSide = nSlaveWMLESSide + 1
             SlaveToWMLESSide_tmp(nSlaveWMLESSide) = nWMLESSides
             SlaveToOppSide_tmp(nSlaveWMLESSide) = OppSideID
-        ELSE
-            ! Otherwise, if WallElem is slave, we use the master info, i.e.,
-            ! coming from the element just above WallElem
-            nMasterWMLESSide = nMasterWMLESSide + 1
-            MasterToWMLESSide_tmp(nMasterWMLESSide) = nWMLESSides
-            MasterToOppSide_tmp(nMasterWMLESSide) = OppSideID
         END IF
     END IF
 END DO
+IF (myRank .EQ. 10) WRITE(*,*) "nwmles", nWMLESSides
 
 !> Allocate permanent space and free temporary ones
 ALLOCATE(MasterToWMLESSide(nMasterWMLESSide))
@@ -391,6 +409,11 @@ SELECT CASE(WallModel)
 
         DO q=0,PP_NZ; DO p=0,PP_N
             tangvec = UPrim_master(2:4,p,q,SideID) - DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
+            IF (myRank .EQ. 10) THEN
+                WRITE(*,*) "sideid, tangvec", sideId, firstInnerSide, firstMPISide_YOUR, lastMPISide_YOUR
+                WRITE(*,*) "uprim_master", uprim_master(2:4,p,q,SideID)
+                WRITE(*,*) "uprim_slave", uprim_slave(2:4,p,q,SideID), uprim_slave(2:4,p,q,MasterToOppSide(i+1))
+            END IF
             VelMag = 0.
             DO j=1,3
                 VelMag = VelMag + tangvec(j)**2
