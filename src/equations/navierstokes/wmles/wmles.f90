@@ -218,7 +218,6 @@ DO iSide=1,nBCSides
         END IF
     END IF
 END DO
-IF (myRank .EQ. 10) WRITE(*,*) "nwmles", nWMLESSides
 
 !> Allocate permanent space and free temporary ones
 ALLOCATE(MasterToWMLESSide(nMasterWMLESSide))
@@ -409,11 +408,6 @@ SELECT CASE(WallModel)
 
         DO q=0,PP_NZ; DO p=0,PP_N
             tangvec = UPrim_master(2:4,p,q,SideID) - DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
-            IF (myRank .EQ. 10) THEN
-                WRITE(*,*) "sideid, tangvec", sideId, firstInnerSide, firstMPISide_YOUR, lastMPISide_YOUR
-                WRITE(*,*) "uprim_master", uprim_master(2:4,p,q,SideID)
-                WRITE(*,*) "uprim_slave", uprim_slave(2:4,p,q,SideID), uprim_slave(2:4,p,q,MasterToOppSide(i+1))
-            END IF
             VelMag = 0.
             DO j=1,3
                 VelMag = VelMag + tangvec(j)**2
