@@ -536,6 +536,11 @@ CALL StartSendMPIData(   Flux_slave, DataSizeSide, 1,nSides,MPIRequest_Flux( :,R
  ! 1. Within FillFlux we only have Side information, whereas calculation of wall stresses need Volume information
  ! 2. We attempt to calculate it just for the first RK stage, as is done for the SGS model
 IF (CurrentStage .EQ. 1) THEN
+  ! Exchange information: master MPI procs now send their face data to slave MPI procs.
+  ! (Until now, only the other way around was done, i.e., slave to master info exchange)
+  CALL StartSendMPIData(UPrim_master, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,SEND), SendID=1)
+  CALL StartReceiveMPIData(UPrim_master, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,RECV), SendID=1)
+  CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
   CALL ComputeWallStress() ! Populate wall stress tensor WMLES_Tauw
 END IF
 #endif /* WMLES */
