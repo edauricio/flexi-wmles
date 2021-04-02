@@ -54,6 +54,7 @@ INTEGER,ALLOCATABLE         :: MasterToWMLESSide(:), SlaveToWMLESSide(:) ! Mappi
 INTEGER,ALLOCATABLE         :: MasterToOppSide(:), SlaveToOppSide(:) ! Mapping between master/slave sides, in terms of nMaster/SlaveWMLESSides,
                                                                      ! and the OppSide in terms of "SideID"
 LOGICAL                     :: WMLESInitDone = .FALSE.
+LOGICAL                     :: UseSemiLocal
 
 #if USE_MPI
 !----------------------------------------------------------------------------------------------------------------------------------

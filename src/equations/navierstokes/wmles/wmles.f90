@@ -60,6 +60,7 @@ CALL prms%CreateRealOption('h_wm', "Distance from the wall at which LES and Wall
 CALL prms%CreateRealOption('delta', "Estimated Boundary Layer Thickness")
 CALL prms%CreateRealOption('vKarman', "von Karman constant", "0.41")
 CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.2")
+CALL prms%CreateLogicalOption('UseSemiLocal', 'Set true to compute Wall Stress using information from the element above from the wall-adjacent element', '.TRUE.')
 
 END SUBROUTINE DefineParametersWMLES
 
@@ -75,7 +76,7 @@ USE MOD_WMLES_Vars
 USE MOD_Mesh_Vars              ! ,ONLY: nBCSides, BC, BoundaryType, MeshInitIsDone, ElemToSide, SideToElem, SideToGlobalSide
 USE MOD_Interpolation_Vars      ,ONLY: InterpolationInitIsDone,xGP,wBary
 USE MOD_Basis                   ,ONLY: LagrangeInterpolationPolys
-USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL
+USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL, GETLOGICAL
 USE MOD_StringTools             ,ONLY: STRICMP
 USE MOD_Testcase_Vars           ,ONLY: Testcase
 #if USE_MPI
@@ -123,6 +124,7 @@ SWRITE(UNIT_StdOut,'(132("-"))')
 SWRITE(UNIT_stdOut,'(A)') ' INIT Wall-Modeled LES...'
 
 WallModel = GETINTFROMSTR('WallModel')
+UseSemiLocal = GETLOGICAL('UseSemiLocal')
 
 ! If Schumann's model is selected, check if we are in a channel flow
 IF ((WallModel .EQ. WMLES_SCHUMANN) .AND. (.NOT.STRICMP(Testcase, Channel))) THEN
@@ -180,32 +182,67 @@ WallStressCount_local = 0
 WallStressCount = 0
 WMLES_Tol = 1.E6
 
+IF (UseSemiLocal) THEN
+    ! Use LES information from the element above the wall-adjacent element
+    DO iSide=1,nBCSides
+        IF (BoundaryType(BC(iSide),BC_TYPE) .EQ. 5) THEN ! WMLES side
 
-DO iSide=1,nBCSides
-    IF (BoundaryType(BC(iSide),BC_TYPE) .EQ. 5) THEN ! WMLES side
+            nWMLESSides = nWMLESSides + 1
+            BCSideToWMLES(iSide) = nWMLESSides
+            WMLESToBCSide_tmp(nWMLESSides) = iSide
 
-        nWMLESSides = nWMLESSides + 1
-        BCSideToWMLES(iSide) = nWMLESSides
-        WMLESToBCSide_tmp(nWMLESSides) = iSide
+            WallElemID = SideToElem(S2E_ELEM_ID, iSide)
+            CALL GetOppositeSide(iSide, WallElemID, OppSideID)
 
-        WallElemID = SideToElem(S2E_ELEM_ID, iSide)
-        CALL GetOppositeSide(iSide, WallElemID, OppSideID)
-
-        IF (SideToElem(S2E_ELEM_ID, OppSideID) .EQ. WallElemID) THEN 
-            ! WallElem is master of opposite side
-            ! So we use the info from slave, i.e., the element just above WallElem
-            nSlaveWMLESSide = nSlaveWMLESSide + 1
-            SlaveToWMLESSide_tmp(nSlaveWMLESSide) = nWMLESSides
-            SlaveToOppSide_tmp(nSlaveWMLESSide) = OppSideID
-        ELSE
-            ! Otherwise, if WallElem is slave, we use the master info, i.e.,
-            ! coming from the element just above WallElem
-            nMasterWMLESSide = nMasterWMLESSide + 1
-            MasterToWMLESSide_tmp(nMasterWMLESSide) = nWMLESSides
-            MasterToOppSide_tmp(nMasterWMLESSide) = OppSideID
+            IF (SideToElem(S2E_ELEM_ID, OppSideID) .EQ. WallElemID) THEN 
+                ! WallElem is master of opposite side
+                ! So we use the info from slave, i.e., the element just above WallElem
+                nSlaveWMLESSide = nSlaveWMLESSide + 1
+                SlaveToWMLESSide_tmp(nSlaveWMLESSide) = nWMLESSides
+                SlaveToOppSide_tmp(nSlaveWMLESSide) = OppSideID
+            ELSE
+                ! Otherwise, if WallElem is slave, we use the master info, i.e.,
+                ! coming from the element just above WallElem
+                nMasterWMLESSide = nMasterWMLESSide + 1
+                MasterToWMLESSide_tmp(nMasterWMLESSide) = nWMLESSides
+                MasterToOppSide_tmp(nMasterWMLESSide) = OppSideID
+            END IF
         END IF
-    END IF
-END DO
+    END DO
+
+ELSE
+    ! In this case, we use information from the wall-adjacent element ONLY
+    DO iSide=1,nBCSides
+        IF (BoundaryType(BC(iSide),BC_TYPE) .EQ. 5) THEN ! WMLES side
+
+            nWMLESSides = nWMLESSides + 1
+            BCSideToWMLES(iSide) = nWMLESSides
+            WMLESToBCSide_tmp(nWMLESSides) = iSide
+
+            WallElemID = SideToElem(S2E_ELEM_ID, iSide)
+            CALL GetOppositeSide(iSide, WallElemID, OppSideID)
+
+            IF (SideToElem(S2E_ELEM_ID, OppSideID) .EQ. WallElemID) THEN 
+                ! WallElem is master of opposite side
+                ! So we use the info from master variables
+                nMasterWMLESSide = nMasterWMLESSide + 1
+                MasterToWMLESSide_tmp(nMasterWMLESSide) = nWMLESSides
+                MasterToOppSide_tmp(nMasterWMLESSide) = OppSideID
+            ELSE
+                ! Otherwise, if WallElem is slave, we use the slave info
+                nSlaveWMLESSide = nSlaveWMLESSide + 1
+                SlaveToWMLESSide_tmp(nSlaveWMLESSide) = nWMLESSides
+                SlaveToOppSide_tmp(nSlaveWMLESSide) = OppSideID
+            END IF
+        END IF
+    END DO
+
+END IF ! UseSemiLocal
+
+! Slave MPI proc responsible for BC imposition needs Face_xGP data to calculate
+! the wall model height, h_wm
+!CALL StartSendMPIData(Face_xGP, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,SEND), SendID=1)
+!CALL StartReceiveMPIData(Face_xGP, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,RECV), SendID=1)
 
 !> Allocate permanent space and free temporary ones
 ALLOCATE(MasterToWMLESSide(nMasterWMLESSide))
@@ -236,6 +273,7 @@ SDEALLOCATE(SlaveToOppSide_tmp)
 ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
 WMLES_TauW = 0.
 
+!CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
 
 WMLESInitDone=.TRUE.
 SWRITE(UNIT_stdOut,'(A)')' INIT Wall-Modeled LES DONE!'
