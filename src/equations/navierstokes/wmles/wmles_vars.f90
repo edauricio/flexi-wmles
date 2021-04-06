@@ -38,6 +38,8 @@ REAL                        :: delta            ! Approximate, or characteristic
 REAL                        :: vKarman          ! von Karman constant
 REAL                        :: B                ! Intercept coefficient for log-law-based models
 INTEGER                     :: NSuper           ! Parameter to find h_wm in standard coordinates, when interpolation is needed.
+REAL,ALLOCATABLE            :: h_wmm(:,:,:)
+INTEGER,ALLOCATABLE         :: WMLESFlip(:)
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
                                                    ! Second and third indices: indices "i,j" of the BC face

@@ -80,6 +80,7 @@ USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL, GETLOGICAL
 USE MOD_StringTools             ,ONLY: STRICMP
 USE MOD_Testcase_Vars           ,ONLY: Testcase
 #if USE_MPI
+USE MOD_MPI
 USE MOD_MPI_Vars                !,ONLY:
 #endif
 
@@ -94,12 +95,12 @@ INTEGER                         :: Loc_hwmElemID, Glob_hwmElemID, OppSideID
 REAL                            :: hwmElem_NodeCoords(3,0:NGeo,0:NGeo,0:NGeo), OppSideNodeCoords(3,4)
 INTEGER                         :: TotalNWMLESSides, GlobalOppSideID, InnerOppSideID
 REAL                            :: OppSideEdge(3,2), OppSideNormal(3), hwmDistVec(3), TolVec(3)
-INTEGER                         :: i,j,k,p,q,r
+INTEGER                         :: i,j,k,p,q,r,flip
 
 INTEGER, ALLOCATABLE            :: WMLESToBCSide_tmp(:), TauW_Proc_tmp(:,:,:,:)
 REAL, ALLOCATABLE               :: OthersPointInfo(:,:,:) ! indices-- 1-3: hwm_Coords, 4-6: TangVec1, 7: Glob_hwmElemID
 INTEGER                         :: WallStressCount_local(0:nProcessors-1), WallStressCount(0:nProcessors-1)
-INTEGER                         :: FirstElemInd, LastElemInd, FirstSideInd, LastSideInd, WallElemID
+INTEGER                         :: WallElemID, OppLocSide
 REAL, ALLOCATABLE               :: PointInfo(:,:)
 REAL                            :: h_wm_Coords(3), DistanceVect(3), Distance
 LOGICAL                         :: FoundhwmElem, FoundhwmPoint
@@ -107,6 +108,7 @@ INTEGER                         :: nPoints_MINE_tmp(2), nPoints_YOUR_tmp(2) ! in
 INTEGER                         :: nPoints_MINE_tmp2(0:nProcessors-1), Proc_RecvTauW_tmp(nProcessors), Proc_SendTauW_tmp(nProcessors)
 INTEGER,ALLOCATABLE             :: MasterToWMLESSide_tmp(:), SlaveToWMLESSide_tmp(:)
 INTEGER,ALLOCATABLE             :: MasterToOppSide_tmp(:), SlaveToOppSide_tmp(:)
+INTEGER,ALLOCATABLE             :: WMLESFlip_tmp(:)
 
 LOGICAL, ALLOCATABLE            :: TauW_MINE_IsFace(:,:), TauW_MINE_IsInterior(:,:), TauW_MINE_IsInterpolation(:,:)
 
@@ -166,6 +168,7 @@ ALLOCATE(TauW_Proc_tmp(2,0:PP_N, 0:PP_NZ, nBCSides))
 ALLOCATE(OthersPointInfo(7,nBCSides*(PP_N+1)*(PP_NZ+1),0:nProcessors-1))
 ALLOCATE(MasterToWMLESSide_tmp(nBCSides),SlaveToWMLESSide_tmp(nBCSides))
 ALLOCATE(MasterToOppSide_tmp(nBCSides),SlaveToOppSide_tmp(nBCSides))
+ALLOCATE(WMLESFlip_tmp(nBCSides))
 
 nWMLESSides = 0
 nMasterWMLESSide = 0
@@ -176,6 +179,7 @@ MasterToWMLESSide_tmp = 0
 MasterToOppSide_tmp = 0
 SlaveToWMLESSide_tmp = 0
 SlaveToOppSide_tmp = 0
+WMLESFlip_tmp = 0
 TauW_Proc_tmp = -1
 OthersPointInfo(7,:,:) = -1
 WallStressCount_local = 0
@@ -220,7 +224,7 @@ ELSE
             WMLESToBCSide_tmp(nWMLESSides) = iSide
 
             WallElemID = SideToElem(S2E_ELEM_ID, iSide)
-            CALL GetOppositeSide(iSide, WallElemID, OppSideID)
+            CALL GetOppositeSide(iSide, WallElemID, OppSideID, OppLocSide)
 
             IF (SideToElem(S2E_ELEM_ID, OppSideID) .EQ. WallElemID) THEN 
                 ! WallElem is master of opposite side
@@ -228,11 +232,24 @@ ELSE
                 nMasterWMLESSide = nMasterWMLESSide + 1
                 MasterToWMLESSide_tmp(nMasterWMLESSide) = nWMLESSides
                 MasterToOppSide_tmp(nMasterWMLESSide) = OppSideID
+
+                ! Also, since we are taking information from the element-local opposite side, 
+                ! we need to "flip" coordinates from the BC to the OppSide
+                SELECT CASE(OppLocSide)
+                    CASE (XI_MINUS,XI_PLUS,ZETA_MINUS,ZETA_PLUS)
+                        WMLESFlip_tmp(nWMLESSides) = 1
+                    CASE (ETA_MINUS,ETA_PLUS)
+                        WMLESFlip_tmp(nWMLESSides) = 2
+                END SELECT
             ELSE
                 ! Otherwise, if WallElem is slave, we use the slave info
                 nSlaveWMLESSide = nSlaveWMLESSide + 1
                 SlaveToWMLESSide_tmp(nSlaveWMLESSide) = nWMLESSides
                 SlaveToOppSide_tmp(nSlaveWMLESSide) = OppSideID
+
+                ! We also need to "flip" coordinates for slave sides,
+                ! but this info is directly available in SideToElem array
+                WMLESFlip_tmp(nWMLESSides) = SideToElem(S2E_FLIP, OppSideID)
             END IF
         END IF
     END DO
@@ -241,8 +258,9 @@ END IF ! UseSemiLocal
 
 ! Slave MPI proc responsible for BC imposition needs Face_xGP data to calculate
 ! the wall model height, h_wm
-!CALL StartSendMPIData(Face_xGP, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,SEND), SendID=1)
-!CALL StartReceiveMPIData(Face_xGP, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,RECV), SendID=1)
+CALL StartSendMPIData(Face_xGP, 3*(PP_N+1)*(PP_NZ+1), 1, nSides, MPIRequest_U(:,SEND), SendID=1)
+CALL StartReceiveMPIData(Face_xGP, 3*(PP_N+1)*(PP_NZ+1), 1, nSides, MPIRequest_U(:,RECV), SendID=1)
+CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
 
 !> Allocate permanent space and free temporary ones
 ALLOCATE(MasterToWMLESSide(nMasterWMLESSide))
@@ -250,6 +268,7 @@ ALLOCATE(MasterToOppSide(nMasterWMLESSide))
 ALLOCATE(SlaveToWMLESSide(nSlaveWMLESSide))
 ALLOCATE(SlaveToOppSide(nSlaveWMLESSide))
 ALLOCATE(WMLESToBCSide(nWMLESSides))
+ALLOCATE(WMLESFlip(nWMLESSides))
 
 DO i=1,nMasterWMLESSide
     MasterToWMLESSide(i) = MasterToWMLESSide_tmp(i)
@@ -261,6 +280,7 @@ DO i=1,nSlaveWMLESSide
 END DO
 DO i=1,nWMLESSides
     WMLESToBCSide(i) = WMLESToBCSide_tmp(i)
+    WMLESFlip(i) = WMLESFlip_tmp(i)
 END DO
 SDEALLOCATE(WMLESToBCSide_tmp)
 SDEALLOCATE(TauW_Proc_tmp)
@@ -269,6 +289,7 @@ SDEALLOCATE(MasterToWMLESSide_tmp)
 SDEALLOCATE(SlaveToWMLESSide_tmp)
 SDEALLOCATE(MasterToOppSide_tmp)
 SDEALLOCATE(SlaveToOppSide_tmp)
+SDEALLOCATE(WMLESFlip_tmp)
 
 ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
 WMLES_TauW = 0.
@@ -285,7 +306,7 @@ END SUBROUTINE InitWMLES
 !==================================================================================================================================
 !> Get the ID of the side opposite of that indicated by SideID, in the same element
 !==================================================================================================================================
-SUBROUTINE GetOppositeSide(SideID, ElemID, OppositeSide)
+SUBROUTINE GetOppositeSide(SideID, ElemID, OppositeSide, SideFlip)
 ! MODULES
 USE MOD_Mesh_Vars,              ONLY: SideToElem, ElemToSide
 IMPLICIT NONE
@@ -293,6 +314,7 @@ IMPLICIT NONE
 ! LOCAL VARIABLES
 INTEGER, INTENT(IN)                 :: ElemID, SideID
 INTEGER, INTENT(OUT)                :: OppositeSide
+INTEGER, INTENT(OUT), OPTIONAL      :: SideFlip
 !----------------------------------------------------------------------------------------------------------------------------------
 INTEGER                             :: LocSide, tmpElemID
 !==================================================================================================================================
@@ -307,16 +329,22 @@ END IF
 SELECT CASE(LocSide)
 CASE (ETA_MINUS)
     OppositeSide = ElemToSide(E2S_SIDE_ID, ETA_PLUS, ElemID)
+    IF (PRESENT(SideFlip)) SideFlip = ETA_PLUS
 CASE (ETA_PLUS)
     OppositeSide = ElemToSide(E2S_SIDE_ID, ETA_MINUS, ElemID)
+    IF (PRESENT(SideFlip)) SideFlip = ETA_MINUS
 CASE (XI_MINUS)
     OppositeSide = ElemToSide(E2S_SIDE_ID, XI_PLUS, ElemID)
+    IF (PRESENT(SideFlip)) SideFlip = XI_PLUS
 CASE (XI_PLUS)
     OppositeSide = ElemToSide(E2S_SIDE_ID, XI_MINUS, ElemID)
+    IF (PRESENT(SideFlip)) SideFlip = XI_MINUS
 CASE (ZETA_MINUS)
     OppositeSide = ElemToSide(E2S_SIDE_ID, ZETA_PLUS, ElemID)
+    IF (PRESENT(SideFlip)) SideFlip = ZETA_PLUS
 CASE (ZETA_PLUS)
     OppositeSide = ElemToSide(E2S_SIDE_ID, ZETA_MINUS, ElemID)
+    IF (PRESENT(SideFlip)) SideFlip = ZETA_MINUS
 END SELECT
 
 END SUBROUTINE
@@ -333,12 +361,14 @@ USE MOD_WMLES_Vars
 USE MOD_Mesh_Vars
 USE MOD_DG_Vars                     
 USE MOD_EOS_Vars                    ,ONLY: mu0
+USE MOD_MPI
+USE MOD_MPI_Vars
 IMPLICIT NONE
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 INTEGER                             :: iSide, sProc, FPInd, IPInd, IntPInd
-INTEGER                             :: p,q,r,i,j,SideID,ElemID
+INTEGER                             :: p,q,r,i,j,SideID,ElemID, flip
 REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag
 REAL                                :: vel_inst(3), rho_inst, tangvec(3), tau_w_vec(3)
 INTEGER                             :: SurfLowUp ! Debug
@@ -350,7 +380,9 @@ END IF
 
 ! Start non-blockingly receiving WMLES info (for those who have anything to receive)
 !CALL StartReceiveTauWMPI()
-
+CALL StartSendMPIData(UPrim_master, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,SEND), SendID=1)
+    CALL StartReceiveMPIData(UPrim_master, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,RECV), SendID=1)
+    CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
 ! TODO ?
 ! For algebraic models (except for Schumann), the outcome is really u_tau instead of tau_w directly
 ! Hence, to compute tau_w, we take tau_w = u_tau^2 * rho. However, this rho should be 
@@ -432,8 +464,14 @@ SELECT CASE(WallModel)
     DO i=1,nMasterWMLESSide
         SideID = MasterToOppSide(i)
 
+        ! Whenever we are using information from the local side, we need to flip the reference
+        ! so that the indices p,q, coincide between the BC and the upper face.
+        ! This is not needed when we're taking non-local information, i.e., from the
+        ! face owned by the element just above the wall element
+        flip = WMLESFlip(MasterToWMLESSide(i))
+
         DO q=0,PP_NZ; DO p=0,PP_N
-            tangvec = UPrim_master(2:4,p,q,SideID) - DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
+            tangvec = UPrim_master(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID) - DOT_PRODUCT(UPrim_master(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
             VelMag = 0.
             DO j=1,3
                 VelMag = VelMag + tangvec(j)**2
@@ -441,10 +479,10 @@ SELECT CASE(WallModel)
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag
 
-            utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),tangvec)
+            utang = DOT_PRODUCT(UPrim_master(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),tangvec)
 
-            u_tau = NewtonLogLaw(utang,(mu0/UPrim_master(1,p,q,SideID)))
-            tau_w_mag = UPrim_master(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            u_tau = NewtonLogLaw(utang,(mu0/UPrim_master(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)))
+            tau_w_mag = UPrim_master(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = (/0.,tau_w_mag,0./)
 
             WMLES_Tauw(1,p,q,MasterToWMLESSide(i)) = -1.*DOT_PRODUCT(tau_w_vec(1:3),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))
@@ -455,8 +493,14 @@ SELECT CASE(WallModel)
     DO i=1,nSlaveWMLESSide
         SideID = SlaveToOppSide(i)
 
+        ! Whenever we are using information from the local side, we need to flip the reference
+        ! so that the indices p,q, coincide between the BC and the upper face.
+        ! This is not needed when we're taking non-local information, i.e., from the
+        ! face owned by the element just above the wall element
+        flip = WMLESFlip(SlaveToWMLESSide(i))
+
         DO q=0,PP_NZ; DO p=0,PP_N
-            tangvec = UPrim_slave(2:4,p,q,SideID) - DOT_PRODUCT(UPrim_slave(2:4,p,q,SideID),NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i)))
+            tangvec = UPrim_slave(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID) - DOT_PRODUCT(UPrim_slave(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i)))
             VelMag = 0.
             DO j=1,3
                 VelMag = VelMag + tangvec(j)**2
@@ -464,10 +508,10 @@ SELECT CASE(WallModel)
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag
 
-            utang = DOT_PRODUCT(UPrim_slave(2:4,p,q,SideID),tangvec)
+            utang = DOT_PRODUCT(UPrim_slave(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),tangvec)
 
-            u_tau = NewtonLogLaw(utang,(mu0/UPrim_slave(1,p,q,SideID)))
-            tau_w_mag = UPrim_slave(1,p,q,SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            u_tau = NewtonLogLaw(utang,(mu0/UPrim_slave(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)))
+            tau_w_mag = UPrim_slave(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = (/0.,tau_w_mag,0./)
 
             WMLES_Tauw(1,p,q,SlaveToWMLESSide(i)) = -1.*DOT_PRODUCT(tau_w_vec(1:3),NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i))))
@@ -475,7 +519,6 @@ SELECT CASE(WallModel)
 
         END DO; END DO ! p, q
     END DO
-
 
     IF(Logging) CALL FLUSH(UNIT_logOut)
 
