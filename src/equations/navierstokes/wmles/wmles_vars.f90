@@ -33,12 +33,10 @@ INTEGER, PARAMETER :: WMLES_COUETTE = 7
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
 INTEGER                     :: WallModel        ! Integer corresponding to the WallModel
-REAL                        :: h_wm, abs_h_wm   ! Wall model height, or exchange location, in terms of off-wall height
 REAL                        :: delta            ! Approximate, or characteristic boundary layer thickness
 REAL                        :: vKarman          ! von Karman constant
 REAL                        :: B                ! Intercept coefficient for log-law-based models
-INTEGER                     :: NSuper           ! Parameter to find h_wm in standard coordinates, when interpolation is needed.
-REAL,ALLOCATABLE            :: h_wmm(:,:,:)
+REAL,ALLOCATABLE            :: h_wm(:,:,:)
 INTEGER,ALLOCATABLE         :: WMLESFlip(:)
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
@@ -46,7 +44,7 @@ REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! Fourth index: WMLES Side
 
 INTEGER                     :: nWMLESSides, nMasterWMLESSide, nSlaveWMLESSide ! Number of WMLES BC Sides                                                   
-INTEGER,ALLOCATABLE         :: BCSideToWMLES(:) ! Mapping between WMLES BC Side and Mesh BCSide.
+INTEGER,ALLOCATABLE         :: BCSideToWMLES(:) ! Mapping between WMLES Side and Mesh BCSide.
                                            ! Usage: BCSideToWMLES(SideID), SideID \in [1:nBCSides]
                                            ! OUTPUT: [1:nWMLESSides]
 INTEGER,ALLOCATABLE         :: WMLESToBCSide(:) ! Inverse of BCSideToWMLES mapping, that is,

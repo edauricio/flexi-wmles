@@ -55,9 +55,6 @@ CALL addStrListEntry('WallModel', 'Spalding', WMLES_SPALDING)
 CALL addStrListEntry('WallModel', 'EquilibriumTBLE', WMLES_EQTBLE)
 CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
 
-CALL prms%CreateRealOption('h_wm', "Distance from the wall at which LES and Wall Model "// &
-                                    "exchange instantaneous flow information", "0.2")
-CALL prms%CreateRealOption('delta', "Estimated Boundary Layer Thickness")
 CALL prms%CreateRealOption('vKarman', "von Karman constant", "0.41")
 CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.2")
 CALL prms%CreateLogicalOption('UseSemiLocal', 'Set true to compute Wall Stress using information from the element above from the wall-adjacent element', '.TRUE.')
@@ -74,7 +71,6 @@ USE MOD_PreProc
 USE MOD_HDF5_Input
 USE MOD_WMLES_Vars
 USE MOD_Mesh_Vars              ! ,ONLY: nBCSides, BC, BoundaryType, MeshInitIsDone, ElemToSide, SideToElem, SideToGlobalSide
-USE MOD_Interpolation_Vars      ,ONLY: InterpolationInitIsDone,xGP,wBary
 USE MOD_Basis                   ,ONLY: LagrangeInterpolationPolys
 USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL, GETLOGICAL
 USE MOD_StringTools             ,ONLY: STRICMP
@@ -89,34 +85,13 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
-REAL                            :: WMLES_Tol, RealTmp
-INTEGER                         :: SideID, iSide, LocSide, MineCnt, nSideIDs, offsetSideID
-INTEGER                         :: Loc_hwmElemID, Glob_hwmElemID, OppSideID
-REAL                            :: hwmElem_NodeCoords(3,0:NGeo,0:NGeo,0:NGeo), OppSideNodeCoords(3,4)
-INTEGER                         :: TotalNWMLESSides, GlobalOppSideID, InnerOppSideID
-REAL                            :: OppSideEdge(3,2), OppSideNormal(3), hwmDistVec(3), TolVec(3)
-INTEGER                         :: i,j,k,p,q,r,flip
-
-INTEGER, ALLOCATABLE            :: WMLESToBCSide_tmp(:), TauW_Proc_tmp(:,:,:,:)
-REAL, ALLOCATABLE               :: OthersPointInfo(:,:,:) ! indices-- 1-3: hwm_Coords, 4-6: TangVec1, 7: Glob_hwmElemID
-INTEGER                         :: WallStressCount_local(0:nProcessors-1), WallStressCount(0:nProcessors-1)
-INTEGER                         :: WallElemID, OppLocSide
-REAL, ALLOCATABLE               :: PointInfo(:,:)
-REAL                            :: h_wm_Coords(3), DistanceVect(3), Distance
-LOGICAL                         :: FoundhwmElem, FoundhwmPoint
-INTEGER                         :: nPoints_MINE_tmp(2), nPoints_YOUR_tmp(2) ! indices -- 1: my rank, 2: how many points u calculate for me
-INTEGER                         :: nPoints_MINE_tmp2(0:nProcessors-1), Proc_RecvTauW_tmp(nProcessors), Proc_SendTauW_tmp(nProcessors)
+REAL                            :: hwmDistVec(3), Distance
+INTEGER                         :: i,j,p,q,flip
+INTEGER, ALLOCATABLE            :: WMLESToBCSide_tmp(:), WMLESFlip_tmp(:)
+INTEGER                         :: iSide, WallElemID, OppSideID, OppLocSide
 INTEGER,ALLOCATABLE             :: MasterToWMLESSide_tmp(:), SlaveToWMLESSide_tmp(:)
 INTEGER,ALLOCATABLE             :: MasterToOppSide_tmp(:), SlaveToOppSide_tmp(:)
-INTEGER,ALLOCATABLE             :: WMLESFlip_tmp(:)
-
-LOGICAL, ALLOCATABLE            :: TauW_MINE_IsFace(:,:), TauW_MINE_IsInterior(:,:), TauW_MINE_IsInterpolation(:,:)
-
-#if USE_MPI
-INTEGER, ALLOCATABLE            :: OthersSideInfo(:,:), OthersElemInfo(:)
-INTEGER                         :: iStat(MPI_STATUS_SIZE), CalcInfoRequests(0:nProcessors-1), PointInfoRequests(0:nProcessors-1)
-INTEGER                         :: hwmRank
-#endif
+LOGICAL,ALLOCATABLE             :: IsMaster(:), IsSlave(:)
 !==================================================================================================================================
 !IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
 !  CALL CollectiveStop(__STAMP__,&
@@ -137,16 +112,6 @@ END IF
 vKarman = GETREAL('vKarman')
 B = GETREAL('B')
 
-h_wm = GETREAL('h_wm')
-IF (H_WM .LE. 0) &
-    CALL CollectiveStop(__STAMP__,&
-        'h_wm distance from the wall must be positive.')
-
-delta = GETREAL('delta')
-
-abs_h_wm = h_wm*delta
-NSuper = 5*PP_N
-
 ! =-=-=-=--=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ! We now set up the h_wm locations, determine in which element they lie,
 ! and who is the MPI proc. responsible for the element. 
@@ -164,8 +129,6 @@ NSuper = 5*PP_N
 
 ALLOCATE(BCSideToWMLES(nBCSides))
 ALLOCATE(WMLESToBCSide_tmp(nBCSides))
-ALLOCATE(TauW_Proc_tmp(2,0:PP_N, 0:PP_NZ, nBCSides))
-ALLOCATE(OthersPointInfo(7,nBCSides*(PP_N+1)*(PP_NZ+1),0:nProcessors-1))
 ALLOCATE(MasterToWMLESSide_tmp(nBCSides),SlaveToWMLESSide_tmp(nBCSides))
 ALLOCATE(MasterToOppSide_tmp(nBCSides),SlaveToOppSide_tmp(nBCSides))
 ALLOCATE(WMLESFlip_tmp(nBCSides))
@@ -180,11 +143,6 @@ MasterToOppSide_tmp = 0
 SlaveToWMLESSide_tmp = 0
 SlaveToOppSide_tmp = 0
 WMLESFlip_tmp = 0
-TauW_Proc_tmp = -1
-OthersPointInfo(7,:,:) = -1
-WallStressCount_local = 0
-WallStressCount = 0
-WMLES_Tol = 1.E6
 
 IF (UseSemiLocal) THEN
     ! Use LES information from the element above the wall-adjacent element
@@ -256,12 +214,6 @@ ELSE
 
 END IF ! UseSemiLocal
 
-! Slave MPI proc responsible for BC imposition needs Face_xGP data to calculate
-! the wall model height, h_wm
-CALL StartSendMPIData(Face_xGP, 3*(PP_N+1)*(PP_NZ+1), 1, nSides, MPIRequest_U(:,SEND), SendID=1)
-CALL StartReceiveMPIData(Face_xGP, 3*(PP_N+1)*(PP_NZ+1), 1, nSides, MPIRequest_U(:,RECV), SendID=1)
-CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
-
 !> Allocate permanent space and free temporary ones
 ALLOCATE(MasterToWMLESSide(nMasterWMLESSide))
 ALLOCATE(MasterToOppSide(nMasterWMLESSide))
@@ -269,32 +221,138 @@ ALLOCATE(SlaveToWMLESSide(nSlaveWMLESSide))
 ALLOCATE(SlaveToOppSide(nSlaveWMLESSide))
 ALLOCATE(WMLESToBCSide(nWMLESSides))
 ALLOCATE(WMLESFlip(nWMLESSides))
+IF (Logging) THEN
+    ALLOCATE(IsMaster(nWMLESSides),IsSlave(nWMLESSides))
+    IsMaster = .FALSE.
+    IsSlave = .FALSE.
+END IF
 
 DO i=1,nMasterWMLESSide
     MasterToWMLESSide(i) = MasterToWMLESSide_tmp(i)
     MasterToOppSide(i) = MasterToOppSide_tmp(i)
+    IF (Logging) IsMaster(MasterToWMLESSide(i)) = .TRUE.
 END DO
 DO i=1,nSlaveWMLESSide
     SlaveToWMLESSide(i) = SlaveToWMLESSide_tmp(i)
     SlaveToOppSide(i) = SlaveToOppSide_tmp(i)
+    IF (Logging) IsSlave(SlaveToWMLESSide(i)) = .TRUE.
 END DO
 DO i=1,nWMLESSides
     WMLESToBCSide(i) = WMLESToBCSide_tmp(i)
     WMLESFlip(i) = WMLESFlip_tmp(i)
 END DO
 SDEALLOCATE(WMLESToBCSide_tmp)
-SDEALLOCATE(TauW_Proc_tmp)
-SDEALLOCATE(OthersPointInfo)
 SDEALLOCATE(MasterToWMLESSide_tmp)
 SDEALLOCATE(SlaveToWMLESSide_tmp)
 SDEALLOCATE(MasterToOppSide_tmp)
 SDEALLOCATE(SlaveToOppSide_tmp)
 SDEALLOCATE(WMLESFlip_tmp)
 
+! Opposite side's Slave MPI proc responsible for BC imposition needs Face_xGP data 
+! to calculate the wall model height, h_wm
+CALL StartSendMPIData(Face_xGP, 3*(PP_N+1)*(PP_NZ+1), 1, nSides, MPIRequest_U(:,SEND), SendID=1)
+CALL StartReceiveMPIData(Face_xGP, 3*(PP_N+1)*(PP_NZ+1), 1, nSides, MPIRequest_U(:,RECV), SendID=1)
+CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
+
+ALLOCATE(h_wm(0:PP_N,0:PP_NZ,nWMLESSides))
+
+IF (nWMLESSides.GT.0) THEN
+    IF (UseSemiLocal) THEN
+        DO i=1,nMasterWMLESSide
+            ! No flip needed, we're taking info from the element above the wall-adjacent element
+            ! which has the same coordinate orientation than the BC side
+            DO q=0,PP_NZ; DO p=0,PP_N
+                hwmDistVec(1:3) = Face_xGP(1:3,p,q,0,MasterToOppSide(i)) - Face_xGP(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
+                Distance = 0
+                DO j=1,3
+                    Distance = Distance + hwmDistVec(j)**2
+                END DO
+                h_wm(p,q,MasterToWMLESSide(i)) = SQRT(Distance)
+            END DO; END DO ! p, q                
+        END DO
+
+        DO i=1,nSlaveWMLESSide
+            ! Here we need flip, because since the element above is slave of face,
+            ! it means wall-adjacent element is master of face, and Face_xGP info
+            ! comes from master
+            OppLocSide = SideToElem(S2E_LOC_SIDE_ID, SlaveToOppSide(i))
+            IF (OppLocSide.EQ.-1) CALL Abort(__STAMP__, "OPPPSS, -1")
+            SELECT CASE(OppLocSide)
+                CASE (XI_MINUS,XI_PLUS,ZETA_MINUS,ZETA_PLUS)
+                    flip = 1
+                CASE (ETA_MINUS,ETA_PLUS)
+                    flip = 2
+            END SELECT
+            DO q=0,PP_NZ; DO p=0,PP_N
+                hwmDistVec(1:3) = Face_xGP(1:3,FS2M(1,p,q,flip),FS2M(2,p,q,flip),0,SlaveToOppSide(i)) - Face_xGP(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i)))
+                Distance = 0
+                DO j=1,3
+                    Distance = Distance + hwmDistVec(j)**2
+                END DO
+                h_wm(p,q,SlaveToWMLESSide(i)) = SQRT(Distance)
+            END DO; END DO ! p, q            
+        END DO
+
+    ELSE
+        DO i=1,nMasterWMLESSide
+            ! Here a flip is needed, because opposite side is Master of interface, and Face_xGP
+            ! is a master information
+            OppLocSide = SideToElem(S2E_LOC_SIDE_ID, MasterToOppSide(i))
+            IF (OppLocSide.EQ.-1) CALL Abort(__STAMP__, "OPPPSS, -1")
+            SELECT CASE(OppLocSide)
+                CASE (XI_MINUS,XI_PLUS,ZETA_MINUS,ZETA_PLUS)
+                    flip = 1
+                CASE (ETA_MINUS,ETA_PLUS)
+                    flip = 2
+            END SELECT
+            DO q=0,PP_NZ; DO p=0,PP_N
+                hwmDistVec(1:3) = Face_xGP(1:3,FS2M(1,p,q,flip),FS2M(2,p,q,flip),0,MasterToOppSide(i)) - Face_xGP(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
+                Distance = 0
+                DO j=1,3
+                    Distance = Distance + hwmDistVec(j)**2
+                END DO
+                h_wm(p,q,MasterToWMLESSide(i)) = SQRT(Distance)
+            END DO; END DO ! p, q
+        END DO
+
+        DO i=1,nSlaveWMLESSide
+            ! No flip is needed here, since wall-adjacent is slave of face and
+            ! Face_xGP info comes from the master (element above), which has
+            ! the same orientation already
+            DO q=0,PP_NZ; DO p=0,PP_N
+                hwmDistVec(1:3) = Face_xGP(1:3,p,q,0,SlaveToOppSide(i)) - Face_xGP(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i)))
+                Distance = 0
+                DO j=1,3
+                    Distance = Distance + hwmDistVec(j)**2
+                END DO
+                h_wm(p,q,SlaveToWMLESSide(i)) = SQRT(Distance)
+            END DO; END DO ! p, q
+        END DO
+    END IF
+END IF
+
 ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
 WMLES_TauW = 0.
 
-!CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
+!> Display debug information in Logfile
+IF (nWMLESSides.GT.0) THEN
+    LOGWRITE(*,'(/,A72)') '========================================================================'
+    LOGWRITE(*,'(20X,A32,20X)') 'WMLES Pre-Computation Stage Info'
+    LOGWRITE(*,'(A72)') '========================================================================'
+    LOGWRITE(*,'(10X,A9)') "Summary:"
+    LOGWRITE(*,'(20X,A18,X,I6)') "nWMLESSides:", nWMLESSides
+    LOGWRITE(*,'(20X,A18,X,I6)') "nMasterWMLESSide:", nMasterWMLESSide
+    LOGWRITE(*,'(20X,A18,X,I6)') "nSlaveWMLESSide:", nSlaveWMLESSide
+    LOGWRITE(*,'(A72)') '------------------------------------------------------------------------'
+    LOGWRITE(*,'(2(A4,2X),A10,2X,2(A6,2X),A9,2X,A15)') "p","q","nWMLESSide","Master","Slave","WMLESFlip", "h_wm Distance"
+    DO i=1,nWMLESSides
+        DO q=0,PP_NZ; DO p=0,PP_N
+            LOGWRITE(*,'(2(I4,2X),I10,2X,2(L6,2X),I9,2XE15.8)') p, q, i, IsMaster(i), IsSlave(i), WMLESFlip(i), h_wm(p,q,i)
+        END DO; END DO
+    END DO
+    LOGWRITE(*,'(A18,X,A35,X,A18,/)') '==================','END OF WMLES PRE-COMPUT. STAGE INFO','=================='
+    IF (Logging) CALL FLUSH(UNIT_logOut)
+END IF
 
 WMLESInitDone=.TRUE.
 SWRITE(UNIT_stdOut,'(A)')' INIT Wall-Modeled LES DONE!'
@@ -367,11 +425,9 @@ IMPLICIT NONE
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-INTEGER                             :: iSide, sProc, FPInd, IPInd, IntPInd
-INTEGER                             :: p,q,r,i,j,SideID,ElemID, flip
-REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag
-REAL                                :: vel_inst(3), rho_inst, tangvec(3), tau_w_vec(3)
-INTEGER                             :: SurfLowUp ! Debug
+INTEGER                             :: p,q,i,j,SideID,flip
+REAL                                :: u_tau, tau_w_mag, utang, VelMag
+REAL                                :: tangvec(3), tau_w_vec(3)
 !==================================================================================================================================
 IF (.NOT.WMLESInitDone) THEN
     CALL CollectiveStop(__STAMP__,&
@@ -403,57 +459,57 @@ SELECT CASE(WallModel)
     ! The channel flow testcase assumes <tau_w> = 1.0
     ! u_tau is used in the log-law eq. to extract <u> (u_mean), which is then used to calculate tau_w
 
-    DO sProc=0,nProcs_SendTauW
-        ! Calculate tau_w for each h_wm that is approximated as a face node
-        DO FPInd=1,nTauW_MINE_FacePoint(sProc)
-            p = TauW_MINE_FacePoint(1,FPInd,sProc)
-            q = TauW_MINE_FacePoint(2,FPInd,sProc)
-            SideID = TauW_MINE_FacePoint(3,FPInd,sProc)
+    ! DO sProc=0,nProcs_SendTauW
+    !     ! Calculate tau_w for each h_wm that is approximated as a face node
+    !     DO FPInd=1,nTauW_MINE_FacePoint(sProc)
+    !         p = TauW_MINE_FacePoint(1,FPInd,sProc)
+    !         q = TauW_MINE_FacePoint(2,FPInd,sProc)
+    !         SideID = TauW_MINE_FacePoint(3,FPInd,sProc)
 
-            ! Face_xGP is only populated for master sides, so that only master sides have approximation nodes (check InitWMLES above)
-            ! hence, use of UPrim_master is guaranteed to be correct here
-            !utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd,sProc),sProc))
-            utang = UPrim_master(2,p,q,SideID)
+    !         ! Face_xGP is only populated for master sides, so that only master sides have approximation nodes (check InitWMLES above)
+    !         ! hence, use of UPrim_master is guaranteed to be correct here
+    !         !utang = DOT_PRODUCT(UPrim_master(2:4,p,q,SideID),TauW_MINE_NormVec(:,FaceToLocalPoint(FPInd,sProc),sProc))
+    !         utang = UPrim_master(2,p,q,SideID)
 
-            u_tau = SQRT(1.0/UPrim_master(1,p,q,SideID)) 
-            u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
-            TauW_MINE(1,FaceToLocalPoint(FPInd,sProc),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
-            TauW_MINE(2,FaceToLocalPoint(FPInd,sProc),sProc) = (2.0*mu0)*(UPrim_master(4,p,q,SideID)/abs_h_wm)
-        END DO
+    !         u_tau = SQRT(1.0/UPrim_master(1,p,q,SideID)) 
+    !         u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
+    !         TauW_MINE(1,FaceToLocalPoint(FPInd,sProc),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
+    !         TauW_MINE(2,FaceToLocalPoint(FPInd,sProc),sProc) = (2.0*mu0)*(UPrim_master(4,p,q,SideID)/abs_h_wm)
+    !     END DO
 
-        ! Calculate tau_w for each h_wm that is approximated as an interior node
-        DO IPInd=1,nTauW_MINE_InteriorPoint(sProc)
-            p = TauW_MINE_InteriorPoint(1,IPInd,sProc)
-            q = TauW_MINE_InteriorPoint(2,IPInd,sProc)
-            r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
-            ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
+    !     ! Calculate tau_w for each h_wm that is approximated as an interior node
+    !     DO IPInd=1,nTauW_MINE_InteriorPoint(sProc)
+    !         p = TauW_MINE_InteriorPoint(1,IPInd,sProc)
+    !         q = TauW_MINE_InteriorPoint(2,IPInd,sProc)
+    !         r = TauW_MINE_InteriorPoint(3,IPInd,sProc)
+    !         ElemID = TauW_MINE_InteriorPoint(4,IPInd,sProc)
 
-            !utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc))
-            utang = UPrim(2,p,q,r,ElemID)
+    !         !utang = DOT_PRODUCT(UPrim(2:4,p,q,r,ElemID),TauW_MINE_NormVec(:,InteriorToLocalPoint(IPInd),sProc))
+    !         utang = UPrim(2,p,q,r,ElemID)
 
-            u_tau = SQRT(1.0/UPrim(1,p,q,r,ElemID)) 
-            u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
-            TauW_MINE(1,InteriorToLocalPoint(IPInd,sProc),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
-            TauW_MINE(2,InteriorToLocalPoint(IPInd,sProc),sProc) = (2.0*mu0)*(UPrim(4,p,q,r,ElemID)/abs_h_wm)
-        END DO
+    !         u_tau = SQRT(1.0/UPrim(1,p,q,r,ElemID)) 
+    !         u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
+    !         TauW_MINE(1,InteriorToLocalPoint(IPInd,sProc),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
+    !         TauW_MINE(2,InteriorToLocalPoint(IPInd,sProc),sProc) = (2.0*mu0)*(UPrim(4,p,q,r,ElemID)/abs_h_wm)
+    !     END DO
 
-        ! Calculate tau_w for each h_wm that must be interpolated
-        DO IntPInd=1,nTauW_MINE_Interpolate(sProc)
-            ElemID = INT(TauW_MINE_Interpolate(4,IntPInd,sProc))
-            !vel_inst(1) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),2,prim=.TRUE.)
-            !vel_inst(2) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),3,prim=.TRUE.)
-            !vel_inst(3) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),4,prim=.TRUE.)
-            !rho_inst = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),1)
+    !     ! Calculate tau_w for each h_wm that must be interpolated
+    !     DO IntPInd=1,nTauW_MINE_Interpolate(sProc)
+    !         ElemID = INT(TauW_MINE_Interpolate(4,IntPInd,sProc))
+    !         !vel_inst(1) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),2,prim=.TRUE.)
+    !         !vel_inst(2) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),3,prim=.TRUE.)
+    !         !vel_inst(3) = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),4,prim=.TRUE.)
+    !         !rho_inst = InterpolateHwm(ElemID,Lag_xi(:,IntPInd,sProc),Lag_eta(:,IntPInd,sProc),Lag_zeta(:,IntPInd,sProc),1)
 
-            !utang = DOT_PRODUCT(vel_inst(:),TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc))
-            utang = vel_inst(1)
+    !         !utang = DOT_PRODUCT(vel_inst(:),TauW_MINE_NormVec(:,InterpToLocalPoint(IntPInd),sProc))
+    !         utang = vel_inst(1)
 
-            u_tau = SQRT(1.0/rho_inst) 
-            u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
-            TauW_MINE(1,InterpToLocalPoint(IntPInd,sProc),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
-            TauW_MINE(2,InterpToLocalPoint(IntPInd,sProc),sProc) = (2.0*mu0)*(vel_inst(3)/abs_h_wm)
-        END DO
-    END DO
+    !         u_tau = SQRT(1.0/rho_inst) 
+    !         u_mean = u_tau*( (1./vKarman) * LOG((abs_h_wm*u_tau)/mu0) + B )
+    !         TauW_MINE(1,InterpToLocalPoint(IntPInd,sProc),sProc) = utang/u_mean * 1.0 ! <tau_w> = 1.0
+    !         TauW_MINE(2,InterpToLocalPoint(IntPInd,sProc),sProc) = (2.0*mu0)*(vel_inst(3)/abs_h_wm)
+    !     END DO
+    ! END DO
 
   CASE (WMLES_LOGLAW)
 
@@ -481,7 +537,7 @@ SELECT CASE(WallModel)
 
             utang = DOT_PRODUCT(UPrim_master(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),tangvec)
 
-            u_tau = NewtonLogLaw(utang,(mu0/UPrim_master(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)))
+            u_tau = NewtonLogLaw(utang,(mu0/UPrim_master(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)),h_wm(p,q,MasterToWMLESSide(i)))
             tau_w_mag = UPrim_master(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = (/0.,tau_w_mag,0./)
 
@@ -510,7 +566,7 @@ SELECT CASE(WallModel)
 
             utang = DOT_PRODUCT(UPrim_slave(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),tangvec)
 
-            u_tau = NewtonLogLaw(utang,(mu0/UPrim_slave(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)))
+            u_tau = NewtonLogLaw(utang,(mu0/UPrim_slave(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)),h_wm(p,q,SlaveToWMLESSide(i)))
             tau_w_mag = UPrim_slave(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = (/0.,tau_w_mag,0./)
 
@@ -533,7 +589,7 @@ SELECT CASE(WallModel)
             ! Calculated as if a model was employed
             utang = UPrim_master(2,p,q,SideID)
 
-            u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+            u_tau = NewtonCouette(utang,mu0,h_wm(p,q,MasterToWMLESSide(i))) ! dpdx, obviously.
 
             ! Create vector aligned with wall-normal direction and magnitude of tau_xy
             tau_w_vec = (/0.,-0.5*u_tau,0./)
@@ -551,7 +607,7 @@ SELECT CASE(WallModel)
             ! Calculated as if a model was employed
             utang = UPrim_slave(2,p,q,SideID)
 
-            u_tau = NewtonCouette(utang,mu0) ! dpdx, obviously.
+            u_tau = NewtonCouette(utang,mu0,h_wm(p,q,SlaveToWMLESSide(i))) ! dpdx, obviously.
 
             ! Create vector aligned with wall-normal direction and magnitude of tau_xy
             tau_w_vec = (/0.,-0.5*u_tau,0./)
@@ -660,7 +716,7 @@ END SUBROUTINE EvalDiffFlux3D_WMLES
 !==================================================================================================================================
 !> Evaluate u_tau from a log-law given instantaneous velocity, using Newton method
 !==================================================================================================================================
-FUNCTION NewtonLogLaw(velx,nu)
+FUNCTION NewtonLogLaw(velx,nu,hwm)
 ! MODULES
 USE MOD_WMLES_Vars                  
 IMPLICIT NONE
@@ -668,6 +724,7 @@ IMPLICIT NONE
 ! INPUT/OUTPUT VARIABLES
 REAL, INTENT(IN)            :: velx         ! Tangential velocity to feed wall model (log-law function)
 REAL, INTENT(IN)            :: nu           ! kinematic viscosity at h_wm
+REAL, INTENT(IN)            :: hwm          ! Wall model height
 REAL                        :: NewtonLogLaw ! Computed friction velocity u_tau
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
@@ -682,8 +739,8 @@ SELECT CASE(WallModel)
     CASE(WMLES_LOGLAW)
         DO WHILE(iter.LT.10) ! Maximum number of iterations. Usually, u_tau is found with 1~4 iters
             iter = iter+1
-            f = NewtonLogLaw*( (1./vKarman)*LOG(abs_h_wm*NewtonLogLaw/nu) + B ) - velx
-            fprime = (1./vKarman) * (LOG(abs_h_wm*NewtonLogLaw/nu) + 1.) + B
+            f = NewtonLogLaw*( (1./vKarman)*LOG(hwm*NewtonLogLaw/nu) + B ) - velx
+            fprime = (1./vKarman) * (LOG(hwm*NewtonLogLaw/nu) + 1.) + B
             ! IF(ABS(fprime).LE.1.E-5) EXIT ! fprime ~ 0 -- INCOMING OVERFLOW BY DIVISION
             NewtonLogLaw = NewtonLogLaw - f/fprime
             IF (ABS(f/fprime).LE.1.E-5) EXIT ! 1.E-5 = stop criterion (tolerance)
@@ -699,7 +756,7 @@ END FUNCTION NewtonLogLaw
 !==================================================================================================================================
 !> Evaluate u_tau from a log-law given instantaneous velocity, using Newton method
 !==================================================================================================================================
-FUNCTION NewtonCouette(velx,nu)
+FUNCTION NewtonCouette(velx,nu,hwm)
 ! MODULES
 USE MOD_WMLES_Vars                  
 IMPLICIT NONE
@@ -707,6 +764,7 @@ IMPLICIT NONE
 ! INPUT/OUTPUT VARIABLES
 REAL, INTENT(IN)            :: velx         ! Tangential velocity to feed wall model (log-law function)
 REAL, INTENT(IN)            :: nu           ! kinematic viscosity at h_wm
+REAL, INTENT(IN)            :: hwm          ! Wall model height
 REAL                        :: NewtonCouette ! Computed friction velocity u_tau
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
@@ -719,8 +777,8 @@ iter = 0
 
 DO WHILE(iter.LT.10) ! Maximum number of iterations. Usually, u_tau is found with 1~4 iters
     iter = iter+1
-    f = velx + (1./(2.*nu))*NewtonCouette*abs_h_wm*(1.-abs_h_wm)
-    fprime = (1./(2.*nu))*abs_h_wm*(1.-abs_h_wm)
+    f = velx + (1./(2.*nu))*NewtonCouette*hwm*(1.-hwm)
+    fprime = (1./(2.*nu))*hwm*(1.-hwm)
     ! IF(ABS(fprime).LE.1.E-5) EXIT ! fprime ~ 0 -- INCOMING OVERFLOW BY DIVISION
     NewtonCouette = NewtonCouette - f/fprime
     IF (ABS(f/fprime).LE.1.E-5) EXIT ! 1.E-5 = stop criterion (tolerance)
