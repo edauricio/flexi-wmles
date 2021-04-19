@@ -58,6 +58,7 @@ CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
 CALL prms%CreateRealOption('vKarman', "von Karman constant", "0.41")
 CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.2")
 CALL prms%CreateLogicalOption('UseSemiLocal', 'Set true to compute Wall Stress using information from the element above from the wall-adjacent element', '.TRUE.')
+CALL prms%CreateIntOption('WMLES_NFilter','Number of high order modes to cut-off/attenuate while filtering the LES solution (< PP_N!)', '0')
 
 END SUBROUTINE DefineParametersWMLES
 
@@ -71,8 +72,8 @@ USE MOD_PreProc
 USE MOD_HDF5_Input
 USE MOD_WMLES_Vars
 USE MOD_Mesh_Vars              ! ,ONLY: nBCSides, BC, BoundaryType, MeshInitIsDone, ElemToSide, SideToElem, SideToGlobalSide
-USE MOD_Basis                   ,ONLY: LagrangeInterpolationPolys
-USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL, GETLOGICAL
+USE MOD_Interpolation_Vars      ,ONLY: Vdm_Leg,sVdm_Leg
+USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL, GETLOGICAL, GETINT
 USE MOD_StringTools             ,ONLY: STRICMP
 USE MOD_Testcase_Vars           ,ONLY: Testcase
 #if USE_MPI
@@ -111,6 +112,9 @@ END IF
 
 vKarman = GETREAL('vKarman')
 B = GETREAL('B')
+
+WMLES_Filter = GETINT('WMLES_NFilter', '0')
+
 
 ! =-=-=-=--=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ! We now set up the h_wm locations, determine in which element they lie,
@@ -331,6 +335,17 @@ IF (nWMLESSides.GT.0) THEN
     END IF
 END IF
 
+IF (nWMLESSides.GT.0 .AND. WMLES_Filter.GT.0) THEN
+    IF (WMLES_Filter .GE. PP_N) CALL CollectiveStop(__STAMP__, "WMLES_Filter must be < N")
+    ALLOCATE(WMLES_FilterMat(0:PP_N, 0:PP_N))
+    WMLES_FilterMat = 0.
+    ! Using a simple cut-off filter
+    DO i=0,(PP_N-WMLES_Filter)
+        WMLES_FilterMat(i,i) = 1.
+    END DO
+    WMLES_FilterMat = MATMUL(MATMUL(Vdm_Leg,WMLES_FilterMat),sVdm_Leg)
+END IF
+
 ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
 WMLES_TauW = 0.
 
@@ -421,24 +436,20 @@ USE MOD_DG_Vars
 USE MOD_EOS_Vars                    ,ONLY: mu0
 USE MOD_MPI
 USE MOD_MPI_Vars
+USE MOD_ChangeBasisByDim            ,ONLY: ChangeBasisSurf
 IMPLICIT NONE
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 INTEGER                             :: p,q,i,j,SideID,flip
 REAL                                :: u_tau, tau_w_mag, utang, VelMag
-REAL                                :: tangvec(3), tau_w_vec(3)
+REAL                                :: tangvec(3), tau_w_vec(3), FaceData(PP_nVarPrim,0:PP_N,0:PP_NZ)
 !==================================================================================================================================
 IF (.NOT.WMLESInitDone) THEN
     CALL CollectiveStop(__STAMP__,&
     'Cannot compute Wall Stress -- Wall-Modeled LES INIT is not done.')
 END IF
 
-! Start non-blockingly receiving WMLES info (for those who have anything to receive)
-!CALL StartReceiveTauWMPI()
-CALL StartSendMPIData(UPrim_master, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,SEND), SendID=1)
-    CALL StartReceiveMPIData(UPrim_master, DataSizeSidePrim, 1, nSides, MPIRequest_U(:,RECV), SendID=1)
-    CALL FinishExchangeMPIData(2*nNbProcs, MPIRequest_U)
 ! TODO ?
 ! For algebraic models (except for Schumann), the outcome is really u_tau instead of tau_w directly
 ! Hence, to compute tau_w, we take tau_w = u_tau^2 * rho. However, this rho should be 
@@ -526,8 +537,16 @@ SELECT CASE(WallModel)
         ! face owned by the element just above the wall element
         flip = WMLESFlip(MasterToWMLESSide(i))
 
+        ! If filtering is ON, we should filter the face solution now and store it in LES_Sol array
+        IF (WMLES_Filter .GT. 0) THEN
+            !CALL WMLESFilter(UPrim_master(:,:,:,SideID), FaceData, WMLES_FilterMat)
+            CALL ChangeBasisSurf(PP_nVarPrim,PP_N,PP_N,WMLES_FilterMat,UPrim_master(:,:,:,SideID),FaceData)
+        ELSE
+            FaceData(:,:,:) = UPrim_master(:,:,:,SideID)
+        END IF
+
         DO q=0,PP_NZ; DO p=0,PP_N
-            tangvec = UPrim_master(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID) - DOT_PRODUCT(UPrim_master(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
+            tangvec = FaceData(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip)) - DOT_PRODUCT(FaceData(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip)),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i)))
             VelMag = 0.
             DO j=1,3
                 VelMag = VelMag + tangvec(j)**2
@@ -535,10 +554,10 @@ SELECT CASE(WallModel)
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag
 
-            utang = DOT_PRODUCT(UPrim_master(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),tangvec)
+            utang = DOT_PRODUCT(FaceData(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip)),tangvec)
 
-            u_tau = NewtonLogLaw(utang,(mu0/UPrim_master(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)),h_wm(p,q,MasterToWMLESSide(i)))
-            tau_w_mag = UPrim_master(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            u_tau = NewtonLogLaw(utang,(mu0/FaceData(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip))),h_wm(p,q,MasterToWMLESSide(i)))
+            tau_w_mag = FaceData(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip))*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = (/0.,tau_w_mag,0./)
 
             WMLES_Tauw(1,p,q,MasterToWMLESSide(i)) = -1.*DOT_PRODUCT(tau_w_vec(1:3),NormVec(1:3,p,q,0,WMLESToBCSide(MasterToWMLESSide(i))))
@@ -555,8 +574,15 @@ SELECT CASE(WallModel)
         ! face owned by the element just above the wall element
         flip = WMLESFlip(SlaveToWMLESSide(i))
 
+        IF (WMLES_Filter .GT. 0) THEN
+            !CALL WMLESFilter(UPrim_slave, FaceData, WMLES_FilterMat)
+            CALL ChangeBasisSurf(PP_nVarPrim,PP_N,PP_N,WMLES_FilterMat,UPrim_slave(:,:,:,SideID),FaceData)
+        ELSE
+            FaceData(:,:,:) = UPrim_slave(:,:,:,SideID)
+        END IF
+
         DO q=0,PP_NZ; DO p=0,PP_N
-            tangvec = UPrim_slave(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID) - DOT_PRODUCT(UPrim_slave(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i)))
+            tangvec = FaceData(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip)) - DOT_PRODUCT(FaceData(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip)),NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i))))*NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i)))
             VelMag = 0.
             DO j=1,3
                 VelMag = VelMag + tangvec(j)**2
@@ -564,10 +590,10 @@ SELECT CASE(WallModel)
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag
 
-            utang = DOT_PRODUCT(UPrim_slave(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID),tangvec)
+            utang = DOT_PRODUCT(FaceData(2:4,FS2M(1,p,q,flip),FS2M(2,p,q,flip)),tangvec)
 
-            u_tau = NewtonLogLaw(utang,(mu0/UPrim_slave(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)),h_wm(p,q,SlaveToWMLESSide(i)))
-            tau_w_mag = UPrim_slave(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip),SideID)*(u_tau**2) ! CHECK TODO ABOVE
+            u_tau = NewtonLogLaw(utang,(mu0/FaceData(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip))),h_wm(p,q,SlaveToWMLESSide(i)))
+            tau_w_mag = FaceData(1,FS2M(1,p,q,flip),FS2M(2,p,q,flip))*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = (/0.,tau_w_mag,0./)
 
             WMLES_Tauw(1,p,q,SlaveToWMLESSide(i)) = -1.*DOT_PRODUCT(tau_w_vec(1:3),NormVec(1:3,p,q,0,WMLESToBCSide(SlaveToWMLESSide(i))))

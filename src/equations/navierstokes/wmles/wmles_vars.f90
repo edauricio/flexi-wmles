@@ -55,5 +55,7 @@ INTEGER,ALLOCATABLE         :: MasterToOppSide(:), SlaveToOppSide(:) ! Mapping b
                                                                      ! and the OppSide in terms of "SideID"
 LOGICAL                     :: WMLESInitDone = .FALSE.
 LOGICAL                     :: UseSemiLocal
+INTEGER                     :: WMLES_Filter
+REAL, ALLOCATABLE           :: WMLES_FilterMat(:,:)
 
 END MODULE MOD_WMLES_Vars
