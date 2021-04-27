@@ -4,16 +4,16 @@
 		"selected_items":
 		[
 			[
+				"WMLESF",
+				"WMLESFilter"
+			],
+			[
 				"UNIT",
 				"UNIT_logOut"
 			],
 			[
 				"MasterToOpp",
 				"MasterToOppSide"
-			],
-			[
-				"WMLESF",
-				"WMLESFlip"
 			],
 			[
 				"Distance",
@@ -460,7 +460,7 @@
 			"file": "equations/navierstokes/wmles/wmles.f90",
 			"settings":
 			{
-				"buffer_size": 39970,
+				"buffer_size": 39172,
 				"encoding": "UTF-8",
 				"line_ending": "Unix"
 			}
@@ -1023,6 +1023,10 @@
 	],
 	"file_history":
 	[
+		"/home/eron/Workspace/CFD/Flexi/flexi/src/interpolation/interpolation_vars.f90",
+		"/home/eron/Workspace/CFD/Flexi/flexi/src/dg/overintegration.f90",
+		"/home/eron/Workspace/CFD/Flexi/flexi/src/fv/fv_vars.f90",
+		"/home/eron/Workspace/CFD/Flexi/flexi/src/globals/mathtools.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/dg/dg.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/mortar/fillmortar.t90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/mortar/fillmortar.f90",
@@ -1035,7 +1039,6 @@
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/globals/preprocessing.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/navierstokes/equation_vars.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/interpolation/interpolation.f90",
-		"/home/eron/Workspace/CFD/Flexi/flexi/src/interpolation/interpolation_vars.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/dg/br2/br2.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/posti/visu/mappings.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/navierstokes/idealgas/eos_posti_vars.f90",
@@ -1049,7 +1052,6 @@
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/rans_sa/idealgas/getboundaryflux.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/posti/visu/visu.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/filter/filter.f90",
-		"/home/eron/Workspace/CFD/Flexi/flexi/src/dg/overintegration.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/navierstokes/analyze_equation.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/analyze/analyze_vars.f90",
 		"/home/eron/Workspace/CFD/Flexi/flexi/src/equations/navierstokes/timeavg.f90",
@@ -1150,6 +1152,8 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"UPrim_slave",
+			"UPrim_master",
 			"nBCSides",
 			"abs_h_wm",
 			"abs_h",
@@ -1275,9 +1279,7 @@
 			"LocWMLES_Tol",
 			"WMLES_Tol",
 			"OppSideID",
-			"SideID",
-			"OppSideID",
-			"nTauW_MINE"
+			"SideID"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -1295,7 +1297,7 @@
 	"groups":
 	[
 		{
-			"selected": 1,
+			"selected": 2,
 			"sheets":
 			[
 				{
@@ -1323,7 +1325,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 22,
+					"stack_index": 27,
 					"type": "text"
 				},
 				{
@@ -1339,8 +1341,8 @@
 						"selection":
 						[
 							[
-								8310,
-								8310
+								5139,
+								5139
 							]
 						],
 						"settings":
@@ -1350,10 +1352,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 1773.0,
+						"translation.y": 1819.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 21,
+					"stack_index": 26,
 					"type": "text"
 				},
 				{
@@ -1369,8 +1371,8 @@
 						"selection":
 						[
 							[
-								3698,
-								3698
+								4730,
+								4730
 							]
 						],
 						"settings":
@@ -1378,10 +1380,10 @@
 							"syntax": "Packages/C++/C++.sublime-syntax"
 						},
 						"translation.x": 0.0,
-						"translation.y": 906.0,
+						"translation.y": 1569.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 37,
+					"stack_index": 8,
 					"type": "text"
 				},
 				{
@@ -1417,7 +1419,7 @@
 			]
 		},
 		{
-			"selected": 51,
+			"selected": 0,
 			"sheets":
 			[
 				{
@@ -1426,15 +1428,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 39970,
+						"buffer_size": 39172,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								25850,
-								25850
+								38984,
+								38984
 							]
 						],
 						"settings":
@@ -1444,10 +1446,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 8794.0,
+						"translation.y": 13457.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 1,
+					"stack_index": 0,
 					"type": "text"
 				},
 				{
@@ -1463,8 +1465,8 @@
 						"selection":
 						[
 							[
-								3971,
-								3971
+								3977,
+								3977
 							]
 						],
 						"settings":
@@ -1474,10 +1476,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 454.0,
+						"translation.y": 199.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 3,
+					"stack_index": 1,
 					"type": "text"
 				},
 				{
@@ -1507,7 +1509,7 @@
 						"translation.y": 3529.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 14,
+					"stack_index": 19,
 					"type": "text"
 				},
 				{
@@ -1537,7 +1539,7 @@
 						"translation.y": 8029.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 11,
+					"stack_index": 16,
 					"type": "text"
 				},
 				{
@@ -1567,7 +1569,7 @@
 						"translation.y": 6366.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 15,
+					"stack_index": 20,
 					"type": "text"
 				},
 				{
@@ -1717,7 +1719,7 @@
 						"translation.y": 4510.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 33,
+					"stack_index": 35,
 					"type": "text"
 				},
 				{
@@ -1881,8 +1883,8 @@
 						"selection":
 						[
 							[
-								16249,
-								16249
+								29117,
+								29117
 							]
 						],
 						"settings":
@@ -1892,10 +1894,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 4585.0,
+						"translation.y": 9213.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 9,
+					"stack_index": 5,
 					"type": "text"
 				},
 				{
@@ -1941,8 +1943,8 @@
 						"selection":
 						[
 							[
-								12681,
-								12681
+								6305,
+								6305
 							]
 						],
 						"settings":
@@ -1952,10 +1954,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 4000.0,
+						"translation.y": 3840.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 2,
+					"stack_index": 4,
 					"type": "text"
 				},
 				{
@@ -1983,7 +1985,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 7,
+					"stack_index": 13,
 					"type": "text"
 				},
 				{
@@ -2013,7 +2015,7 @@
 						"translation.y": 1875.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 24,
+					"stack_index": 29,
 					"type": "text"
 				},
 				{
@@ -2043,7 +2045,7 @@
 						"translation.y": 10629.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 25,
+					"stack_index": 30,
 					"type": "text"
 				},
 				{
@@ -2073,7 +2075,7 @@
 						"translation.y": 4373.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 23,
+					"stack_index": 28,
 					"type": "text"
 				},
 				{
@@ -2103,7 +2105,7 @@
 						"translation.y": 2853.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 8,
+					"stack_index": 14,
 					"type": "text"
 				},
 				{
@@ -2161,7 +2163,7 @@
 						"translation.y": 2589.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 17,
+					"stack_index": 22,
 					"type": "text"
 				},
 				{
@@ -2191,7 +2193,7 @@
 						"translation.y": 5241.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 35,
+					"stack_index": 37,
 					"type": "text"
 				},
 				{
@@ -2249,7 +2251,7 @@
 						"translation.y": 5754.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 34,
+					"stack_index": 36,
 					"type": "text"
 				},
 				{
@@ -2399,7 +2401,7 @@
 						"translation.y": 1739.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 18,
+					"stack_index": 23,
 					"type": "text"
 				},
 				{
@@ -2429,7 +2431,7 @@
 						"translation.y": 10096.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 19,
+					"stack_index": 24,
 					"type": "text"
 				},
 				{
@@ -2459,7 +2461,7 @@
 						"translation.y": 10766.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 20,
+					"stack_index": 25,
 					"type": "text"
 				},
 				{
@@ -2593,8 +2595,8 @@
 						"selection":
 						[
 							[
-								7829,
-								7829
+								5059,
+								5059
 							]
 						],
 						"settings":
@@ -2604,10 +2606,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 1960.0,
+						"translation.y": 828.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 38,
+					"stack_index": 9,
 					"type": "text"
 				},
 				{
@@ -2637,7 +2639,7 @@
 						"translation.y": 3524.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 26,
+					"stack_index": 31,
 					"type": "text"
 				},
 				{
@@ -2695,7 +2697,7 @@
 						"translation.y": 3840.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 30,
+					"stack_index": 12,
 					"type": "text"
 				},
 				{
@@ -2711,8 +2713,8 @@
 						"selection":
 						[
 							[
-								1873,
-								1873
+								10199,
+								10199
 							]
 						],
 						"settings":
@@ -2722,10 +2724,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 1326.0,
+						"translation.y": 2601.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 27,
+					"stack_index": 11,
 					"type": "text"
 				},
 				{
@@ -2755,7 +2757,7 @@
 						"translation.y": 12024.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 28,
+					"stack_index": 32,
 					"type": "text"
 				},
 				{
@@ -2785,7 +2787,7 @@
 						"translation.y": 205.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 32,
+					"stack_index": 34,
 					"type": "text"
 				},
 				{
@@ -2801,8 +2803,8 @@
 						"selection":
 						[
 							[
-								32223,
-								32223
+								12687,
+								12687
 							]
 						],
 						"settings":
@@ -2812,10 +2814,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 9882.0,
+						"translation.y": 3583.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 31,
+					"stack_index": 10,
 					"type": "text"
 				},
 				{
@@ -2845,7 +2847,7 @@
 						"translation.y": 2350.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 29,
+					"stack_index": 33,
 					"type": "text"
 				},
 				{
@@ -2875,7 +2877,7 @@
 						"translation.y": 10171.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 13,
+					"stack_index": 18,
 					"type": "text"
 				},
 				{
@@ -2905,7 +2907,7 @@
 						"translation.y": 3388.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 10,
+					"stack_index": 15,
 					"type": "text"
 				},
 				{
@@ -2921,8 +2923,8 @@
 						"selection":
 						[
 							[
-								4205,
-								4205
+								4345,
+								4345
 							]
 						],
 						"settings":
@@ -2932,10 +2934,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 1076.0,
+						"translation.y": 1071.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 6,
+					"stack_index": 7,
 					"type": "text"
 				},
 				{
@@ -2951,8 +2953,8 @@
 						"selection":
 						[
 							[
-								10446,
-								10446
+								7553,
+								7553
 							]
 						],
 						"settings":
@@ -2962,10 +2964,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 2346.0,
+						"translation.y": 2142.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 0,
+					"stack_index": 6,
 					"type": "text"
 				},
 				{
@@ -2981,8 +2983,8 @@
 						"selection":
 						[
 							[
-								16104,
-								16104
+								6818,
+								6818
 							]
 						],
 						"settings":
@@ -2992,10 +2994,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 5751.0,
+						"translation.y": 1571.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 4,
+					"stack_index": 3,
 					"type": "text"
 				},
 				{
@@ -3011,8 +3013,8 @@
 						"selection":
 						[
 							[
-								7701,
-								7701
+								9632,
+								9632
 							]
 						],
 						"settings":
@@ -3022,10 +3024,10 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 2623.0,
+						"translation.y": 2773.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 5,
+					"stack_index": 2,
 					"type": "text"
 				},
 				{
@@ -3055,7 +3057,7 @@
 						"translation.y": 2113.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 12,
+					"stack_index": 17,
 					"type": "text"
 				},
 				{
@@ -3113,7 +3115,7 @@
 						"translation.y": 1399.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 16,
+					"stack_index": 21,
 					"type": "text"
 				},
 				{
@@ -3141,7 +3143,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 36,
+					"stack_index": 38,
 					"type": "text"
 				}
 			]
