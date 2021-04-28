@@ -336,7 +336,7 @@ IF (nWMLESSides.GT.0) THEN
 END IF
 
 IF (nWMLESSides.GT.0 .AND. WMLES_Filter.GT.0) THEN
-    IF (WMLES_Filter .GE. PP_N) CALL CollectiveStop(__STAMP__, "WMLES_Filter must be < N")
+    IF (WMLES_Filter .GT. PP_N) CALL CollectiveStop(__STAMP__, "WMLES_Filter must be <= N")
     ALLOCATE(WMLES_FilterMat(0:PP_N, 0:PP_N))
     WMLES_FilterMat = 0.
     ! Using a simple cut-off filter
