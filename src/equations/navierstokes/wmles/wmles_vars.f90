@@ -29,6 +29,9 @@ INTEGER, PARAMETER :: WMLES_SPALDING = 5
 INTEGER, PARAMETER :: WMLES_EQTBLE = 6
 INTEGER, PARAMETER :: WMLES_COUETTE = 7
 
+INTEGER, PARAMETER :: WMLES_PROJFILTER = 1
+INTEGER, PARAMETER :: WMLES_MODALTRANSFILTER = 2
+
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
@@ -55,6 +58,7 @@ INTEGER,ALLOCATABLE         :: MasterToOppSide(:), SlaveToOppSide(:) ! Mapping b
                                                                      ! and the OppSide in terms of "SideID"
 LOGICAL                     :: WMLESInitDone = .FALSE.
 LOGICAL                     :: UseSemiLocal
+INTEGER                     :: WMLES_FilterType
 INTEGER                     :: WMLES_Filter
 REAL, ALLOCATABLE           :: WMLES_FilterMat(:,:)
 

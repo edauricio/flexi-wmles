@@ -58,7 +58,10 @@ CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
 CALL prms%CreateRealOption('vKarman', "von Karman constant", "0.41")
 CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.2")
 CALL prms%CreateLogicalOption('UseSemiLocal', 'Set true to compute Wall Stress using information from the element above from the wall-adjacent element', '.TRUE.')
-CALL prms%CreateIntOption('WMLES_NFilter','Number of high order modes to cut-off/attenuate while filtering the LES solution (< PP_N!)', '0')
+CALL prms%CreateIntOption('WMLES_NFilter','Number of high order modes to cut-off/attenuate while filtering the LES solution (=< PP_N!)', '0')
+CALL prms%CreateIntFromStringOption('WMLES_FilterType', 'Type of filter to use when filtering the LES solution in the wall model procedure', 'Projection')
+CALL addStrListEntry('WMLES_FilterType', 'Projection', WMLES_PROJFILTER)
+CALL addStrListEntry('WMLES_FilterType', 'Transform', WMLES_MODALTRANSFILTER)
 
 END SUBROUTINE DefineParametersWMLES
 
@@ -72,7 +75,8 @@ USE MOD_PreProc
 USE MOD_HDF5_Input
 USE MOD_WMLES_Vars
 USE MOD_Mesh_Vars              ! ,ONLY: nBCSides, BC, BoundaryType, MeshInitIsDone, ElemToSide, SideToElem, SideToGlobalSide
-USE MOD_Interpolation_Vars      ,ONLY: Vdm_Leg,sVdm_Leg
+USE MOD_Interpolation           ,ONLY: GetVandermonde
+USE MOD_Interpolation_Vars      ,ONLY: Vdm_Leg,sVdm_Leg,NodeType
 USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL, GETLOGICAL, GETINT
 USE MOD_StringTools             ,ONLY: STRICMP
 USE MOD_Testcase_Vars           ,ONLY: Testcase
@@ -86,6 +90,7 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
+CHARACTER(LEN=20)               :: NodeTypeF = "GAUSS-LOBATTO"
 REAL                            :: hwmDistVec(3), Distance
 INTEGER                         :: i,j,p,q,flip
 INTEGER, ALLOCATABLE            :: WMLESToBCSide_tmp(:), WMLESFlip_tmp(:)
@@ -93,6 +98,7 @@ INTEGER                         :: iSide, WallElemID, OppSideID, OppLocSide
 INTEGER,ALLOCATABLE             :: MasterToWMLESSide_tmp(:), SlaveToWMLESSide_tmp(:)
 INTEGER,ALLOCATABLE             :: MasterToOppSide_tmp(:), SlaveToOppSide_tmp(:)
 LOGICAL,ALLOCATABLE             :: IsMaster(:), IsSlave(:)
+REAL, ALLOCATABLE               :: TempVdmN_NF(:,:), TempVdmNF_N(:,:)
 !==================================================================================================================================
 !IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
 !  CALL CollectiveStop(__STAMP__,&
@@ -114,6 +120,7 @@ vKarman = GETREAL('vKarman')
 B = GETREAL('B')
 
 WMLES_Filter = GETINT('WMLES_NFilter', '0')
+WMLES_FilterType = GETINTFROMSTR('WMLES_FilterType')
 
 
 ! =-=-=-=--=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -339,11 +346,22 @@ IF (nWMLESSides.GT.0 .AND. WMLES_Filter.GT.0) THEN
     IF (WMLES_Filter .GT. PP_N) CALL CollectiveStop(__STAMP__, "WMLES_Filter must be <= N")
     ALLOCATE(WMLES_FilterMat(0:PP_N, 0:PP_N))
     WMLES_FilterMat = 0.
-    ! Using a simple cut-off filter
-    DO i=0,(PP_N-WMLES_Filter)
-        WMLES_FilterMat(i,i) = 1.
-    END DO
-    WMLES_FilterMat = MATMUL(MATMUL(Vdm_Leg,WMLES_FilterMat),sVdm_Leg)
+    IF (WMLES_FilterType .EQ. WMLES_MODALTRANSFILTER) THEN
+        ! Using a simple cut-off filter
+        DO i=0,(PP_N-WMLES_Filter)
+            WMLES_FilterMat(i,i) = 1.
+        END DO
+        WMLES_FilterMat = MATMUL(MATMUL(Vdm_Leg,WMLES_FilterMat),sVdm_Leg)
+    ELSE IF (WMLES_FilterType .EQ. WMLES_PROJFILTER) THEN
+        IF (WMLES_Filter .EQ. PP_N) NodeTypeF = "GAUSS"
+        ! Get in/out Vandermonde matrices
+        ALLOCATE(TempVdmN_NF(0:(PP_N-WMLES_Filter),0:PP_N), TempVdmNF_N(0:PP_N,0:(PP_N-WMLES_Filter)))
+        CALL GetVandermonde(PP_N,NodeType,(PP_N-WMLES_Filter),NodeTypeF,TempVdmN_NF,TempVdmNF_N)
+        ! Form the final filter matrix (product of the obtained Vandermonde matrices above)
+        WMLES_FilterMat = MATMUL(TempVdmNF_N,TempVdmN_NF)
+    ELSE
+        CALL CollectiveStop(__STAMP__, 'Unknown Filter Type -- check WMLES_FilterType parameter')
+    END IF
 END IF
 
 ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
@@ -436,7 +454,8 @@ USE MOD_DG_Vars
 USE MOD_EOS_Vars                    ,ONLY: mu0
 USE MOD_MPI
 USE MOD_MPI_Vars
-USE MOD_ChangeBasisByDim            ,ONLY: ChangeBasisSurf
+USE MOD_ChangeBasisByDim            ,ONLY: ChangeBasisSurf, ChangeBasisVolume
+USE MOD_ChangeBasis
 IMPLICIT NONE
 
 !----------------------------------------------------------------------------------------------------------------------------------
@@ -528,6 +547,7 @@ SELECT CASE(WallModel)
     ! Then, u (projected onto the wall-tangent streamwise direction) is used in the log-law
     ! and u_tau is computed (using Newton iterations).
     ! Then, u_tau is used to compute wall shear stresses.
+
     DO i=1,nMasterWMLESSide
         SideID = MasterToOppSide(i)
 
@@ -540,7 +560,7 @@ SELECT CASE(WallModel)
         ! If filtering is ON, we should filter the face solution now and store it in LES_Sol array
         IF (WMLES_Filter .GT. 0) THEN
             !CALL WMLESFilter(UPrim_master(:,:,:,SideID), FaceData, WMLES_FilterMat)
-            CALL ChangeBasisSurf(PP_nVarPrim,PP_N,PP_N,WMLES_FilterMat,UPrim_master(:,:,:,SideID),FaceData)
+            CALL ChangeBasisSurf(PP_nVarPrim,PP_N,PP_N,WMLES_FilterMat,UPrim_master(:,:,:,SideID),FaceData(:,:,:))
         ELSE
             FaceData(:,:,:) = UPrim_master(:,:,:,SideID)
         END IF
@@ -576,7 +596,7 @@ SELECT CASE(WallModel)
 
         IF (WMLES_Filter .GT. 0) THEN
             !CALL WMLESFilter(UPrim_slave, FaceData, WMLES_FilterMat)
-            CALL ChangeBasisSurf(PP_nVarPrim,PP_N,PP_N,WMLES_FilterMat,UPrim_slave(:,:,:,SideID),FaceData)
+            CALL ChangeBasisSurf(PP_nVarPrim,PP_N,PP_N,WMLES_FilterMat,UPrim_slave(:,:,:,SideID),FaceData(:,:,:))
         ELSE
             FaceData(:,:,:) = UPrim_slave(:,:,:,SideID)
         END IF
