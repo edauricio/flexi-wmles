@@ -536,6 +536,11 @@ CALL StartSendMPIData(   Flux_slave, DataSizeSide, 1,nSides,MPIRequest_Flux( :,R
  ! 1. Within FillFlux we only have Side information, whereas calculation of wall stresses need Volume information
  ! 2. We attempt to calculate it just for the first RK stage, as is done for the SGS model
 IF (CurrentStage .EQ. 1) THEN
+  ! Start the communcation in order to correctly populate HWMInfo array for each MPI proc. responsible for
+  ! modeled BC imposition
+  CALL StartSendHwmMPIData()
+  CALL StartReceiveHwmMPIData()
+  CALL FinishExchanceHWMData()
   CALL ComputeWallStress() ! Populate wall stress tensor WMLES_Tauw
 END IF
 #endif /* WMLES */

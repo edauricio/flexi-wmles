@@ -46,6 +46,7 @@ USE MOD_ReadInTools             ,ONLY: prms, addStrListEntry
 IMPLICIT NONE
 !==================================================================================================================================
 CALL prms%SetSection("Wall-Modeled LES")
+CALL prms%CreateStringOption( 'WMConnectionFile', "(relative) path to the file containing the wall-modeling connection information.")
 CALL prms%CreateIntFromStringOption('WallModel', "Wall model to be used on walls defined with approximate boundary conditions", 'LogLaw')
 CALL addStrListEntry('WallModel', 'Schumann', WMLES_SCHUMANN)
 CALL addStrListEntry('WallModel', 'LogLaw', WMLES_LOGLAW)
@@ -55,16 +56,15 @@ CALL addStrListEntry('WallModel', 'Spalding', WMLES_SPALDING)
 CALL addStrListEntry('WallModel', 'EquilibriumTBLE', WMLES_EQTBLE)
 CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
 
-CALL prms%CreateRealOption('h_wm', "Distance from the wall at which LES and Wall Model "// &
-                                    "exchange instantaneous flow information", "0.2")
-CALL prms%CreateRealOption('delta', "Estimated Boundary Layer Thickness")
-CALL prms%CreateRealOption('vKarman', "von Karman constant", "0.41")
-CALL prms%CreateRealOption('B', "Log-law intercept coefficient", "5.2")
+CALL prms%CreateRealOption('vKarman', "von Karman constant for the log-law model", "0.41")
+CALL prms%CreateRealOption('B', "intercept coefficient for the log-law model", "5.2")
 
 END SUBROUTINE DefineParametersWMLES
 
 !==================================================================================================================================
-!> Read and initialize parameters of WMLES computation
+!> This subroutine reads and initialize parameters of WMLES computation, and also populates all the necessary
+!> mappings for the solution interpolation to the h_wm point and the communications between processors with
+!> BC side and h_wm point.
 !==================================================================================================================================
 SUBROUTINE InitWMLES()
 ! MODULES
@@ -73,9 +73,9 @@ USE MOD_PreProc
 USE MOD_HDF5_Input
 USE MOD_WMLES_Vars
 USE MOD_Mesh_Vars              ! ,ONLY: nBCSides, BC, BoundaryType, MeshInitIsDone, ElemToSide, SideToElem, SideToGlobalSide
-USE MOD_Interpolation_Vars      ,ONLY: InterpolationInitIsDone,xGP,wBary
+USE MOD_Interpolation_Vars      ,ONLY: InterpolationInitIsDone,xGP,wBary,NodeType
 USE MOD_Basis                   ,ONLY: LagrangeInterpolationPolys
-USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL
+USE MOD_ReadInTools             ,ONLY: GETINTFROMSTR, GETREAL, GETSTR
 USE MOD_StringTools             ,ONLY: STRICMP
 USE MOD_Testcase_Vars           ,ONLY: Testcase
 #if USE_MPI
@@ -88,7 +88,7 @@ IMPLICIT NONE
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
 REAL                            :: WMLES_Tol, RealTmp
-INTEGER                         :: SideID, iSide, LocSide, MineCnt, nSideIDs, offsetSideID
+INTEGER                         :: SideID, iSide, iGlobalSide, LocSide, MineCnt, nSideIDs, offsetSideID
 INTEGER                         :: Loc_hwmElemID, Glob_hwmElemID, OppSideID
 REAL                            :: hwmElem_NodeCoords(3,0:NGeo,0:NGeo,0:NGeo), OppSideNodeCoords(3,4)
 INTEGER                         :: TotalNWMLESSides, GlobalOppSideID, InnerOppSideID
@@ -112,15 +112,41 @@ INTEGER, ALLOCATABLE            :: OthersSideInfo(:,:), OthersElemInfo(:)
 INTEGER                         :: iStat(MPI_STATUS_SIZE), CalcInfoRequests(0:nProcessors-1), PointInfoRequests(0:nProcessors-1)
 INTEGER                         :: hwmRank
 #endif
+
+! NEW ONES
+INTEGER                         :: iExt, nWMLESSides_global, N_WMConnection, nBCSides_global
+INTEGER                         :: iElem, iProc, iWMLESSide
+CHARACTER(LEN=255)              :: WMConnectionFileProposal, NodeType_WMConnection
+INTEGER, ALLOCATABLE            :: BCSideToWMLES_global(:)
+REAL, ALLOCATABLE               :: WMConnection(:,:,:,:), HWMInterpInfo_tmp(:,:)
+
+#if USE_MPI
+INTEGER, ALLOCATABLE            :: nBCSidesPerProc(:)
+REAL, ALLOCATABLE               :: HWMSendInfo_tmp(:,:,:), HWMLocalInfo_tmp(:,:), HWMRecvInfo_tmp(:,:,:)
+INTEGER, ALLOCATABLE            :: nHWMSendPoints_tmp(:), nHWMRecvPoints_tmp(:)
+INTEGER, ALLOCATABLE            :: SendToInterpPoint_tmp(:,:), LocalToInterpPoint_tmp(:)
+LOGICAL, ALLOCATABLE            :: WMLESRecvFromProc(:), WMLESSendToProc(:)
+#endif
 !==================================================================================================================================
-!IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
-!  CALL CollectiveStop(__STAMP__,&
-!    'Wall-Modeled LES not ready to be called or already called.')
-!END IF
+IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
+ CALL CollectiveStop(__STAMP__,&
+   'Wall-Modeled LES not ready to be called or already called.')
+END IF
 SWRITE(UNIT_StdOut,'(132("-"))')
 SWRITE(UNIT_stdOut,'(A)') ' INIT Wall-Modeled LES...'
 
+
+!> Read the parameters that are independent from the WM connection
+
 WallModel = GETINTFROMSTR('WallModel')
+
+SELECT CASE(WallModel)
+    CASE(WMLES_LAMINAR_INTEGRAL)
+        nHWMPropSend = 2 ! velocity and dp/dx
+
+    CASE DEFAULT
+        nHWMPropSend = 1 ! velocity only
+END SELECT
 
 ! If Schumann's model is selected, check if we are in a channel flow
 IF ((WallModel .EQ. WMLES_SCHUMANN) .AND. (.NOT.STRICMP(Testcase, Channel))) THEN
@@ -128,551 +154,382 @@ IF ((WallModel .EQ. WMLES_SCHUMANN) .AND. (.NOT.STRICMP(Testcase, Channel))) THE
         "Schumann's wall model can only be applied to the Channel flow testcase.")
 END IF
 
+! Log-law model parameters
 vKarman = GETREAL('vKarman')
 B = GETREAL('B')
 
-h_wm = GETREAL('h_wm')
-IF (H_WM .LE. 0) &
-    CALL CollectiveStop(__STAMP__,&
-        'h_wm distance from the wall must be positive.')
-
-delta = GETREAL('delta')
-
-abs_h_wm = h_wm*delta
-NSuper = 3*PP_N
-
 ! =-=-=-=--=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-! We now set up the h_wm locations, determine in which element they lie,
-! and who is the MPI proc. responsible for the element. 
-! This is done by reading the hdf5 mesh file to avoid complications by 
-! communications AND DEADLOCKS!! when determining such information.
-!
-! Also, we set up the information for communication between the proc. responsible
-! for the calculation (owns h_wm element) and the proc. responsible for BC
-! imposition (owns WMLESSide)
-!
-! Finally, we check whether interpolation is needed or if the h_wm point may be approximated
-! by an interior/face point in the element. If interpolation is needed, all the info
-! for this interpolation is also set up (i.e. mapping matrices, basis functions, etc)
+! We now set up the necessary information for the wall-stress computation and 
+! message communication between the relevant processors for the procedure.
+! In other words, we do the following:
+! (0) Bear in mind that all info in the WM connection file is in terms of GLOBAL elements and BC side numbers)
+! 1) Get the total number of BC sides (global), so that each MPI proc. may scan the whole array in the HDF5 file
+! 2) Check wheter a Modelled Side is within this proc. (using the mapping in the HDF5 file)
+! 3) For all modeled sides within this proc, we store wall-tangent vector info, as well as the
+!    processors (and count) that need to send us information for the wall-stress calculation
+! 4) Looping over all modeled sides in the HDF5 file, check whether there is any element in this proc.
+!    responsible for sending information to a proc. responsible for modeled BC imposition. In such a case,
+!    store the relevant information about the processor to receive your information, as well as the h_wm
+!    point (in standard coordinates, \xi, \eta, \zeta) where the solution within your element must be interpolated.
 ! =-=-=-=--=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
+! Read WM connection file
+
+iExt=INDEX(MeshFile,'.',BACK = .TRUE.) ! Position of file extension
+WMConnectionFileProposal = MeshFile(:iExt-6)
+WMConnectionFileProposal = TRIM(WMConnectionFileProposal) // '_WM.h5'
+
+WMConnectionFile = GETSTR('WMConnectionFile', WMConnectionFileProposal)
+IF (.NOT. FILEEXISTS(WMConnectionFile)) THEN
+    CALL Abort(__STAMP__, 'WM Connection File not found! Check if the parameter WmConnnectionFile' &
+                            // 'is correctly set in the parameter file, or if the filename is the default one (_WM.h5)')
+END IF
+
+CALL OpenDataFile(TRIM(WMConnectionFile),create=.FALSE.,single=.FALSE.,readOnly=.TRUE.)
+CALL ReadAttribute(File_ID,'nModelledBCSides',1,IntScalar=nWMLESSides_global)
+
+! Safety checks if interface preparation information is compatible with current simulation
+CALL ReadAttribute(File_ID,'N',1,IntScalar=N_WMConnection)
+IF (N_WMConnection.NE.PP_N) &
+    CALL Abort(__STAMP__,'Polynomial degree of calculation not equal to WM connection!')
+CALL ReadAttribute(File_ID,'NodeType',1,StrScalar=NodeType_WMConnection)
+IF (.NOT.STRICMP(NodeType,TRIM(NodeType_WMConnection))) &
+        CALL Abort(__STAMP__,'Node type of calculation not equal to WM connection!')
+
+! Get global number of BC Sides
+#if USE_MPI
+CALL MPI_ALLREDUCE(nBCSides,nBCSides_global,1,MPI_INT,MPI_SUM,MPI_COMM_WORLD,iError)
+#else
+nBCSides_global =  nBCSides
+#endif
+
+! Read global mapping from BCside to WMSide
+ALLOCATE(BCSideToWMLES_global(nBCSides_global))
+CALL ReadArray('MappingWM',1,(/nBCSides_global/),0,1,IntArray=BCSideToWMLES_global)
+
+! Read connection information
+ALLOCATE(WMConnection(N_INTERFACE_PARAMS,0:PP_N,0:PP_N,nWMLESSides_global))
+CALL ReadArray('WM',4,&
+               (/N_INTERFACE_PARAMS,PP_N+1,PP_N+1,nWMLESSides_global/),&
+               0,4,RealArray=WMConnection)
+
+CALL CloseDataFile()
+
+! We now count the number of WM sides in this proc. (i.e., local info)
 ALLOCATE(BCSideToWMLES(nBCSides))
 ALLOCATE(WMLESToBCSide_tmp(nBCSides))
-ALLOCATE(TauW_Proc_tmp(2,0:PP_N, 0:PP_NZ, nBCSides))
-ALLOCATE(OthersPointInfo(7,nBCSides*(PP_N+1)*(PP_NZ+1),0:nProcessors-1))
 
-nWMLESSides = 0
 BCSideToWMLES = 0
-WMLESToBCSide_tmp = 0
-TauW_Proc_tmp = -1
-OthersPointInfo(7,:,:) = -1
-WallStressCount_local = 0
-WallStressCount = 0
-WMLES_Tol = 1.E6
-
+nWMLESSides = 0
 DO iSide=1,nBCSides
-    IF (BoundaryType(BC(iSide),BC_TYPE) .EQ. 5) THEN ! WMLES side
-
+    IF(BoundaryType(BC(iSide),BC_TYPE).EQ.5) THEN ! WMLES BC Side
         nWMLESSides = nWMLESSides + 1
         BCSideToWMLES(iSide) = nWMLESSides
         WMLESToBCSide_tmp(nWMLESSides) = iSide
-
-        ! Since not every MPI proc gets into this IF, we cannot open the file 
-        ! collectively, unfortunately. Hence, single = TRUE so that every proc.
-        ! within this IF opens the file on its own.
-        ! If this becomes too heavy a burden, we may pre-check which procs have
-        ! WMLES Sides and create a communicator for them to open the file collectively.
-        CALL OpenDataFile(MeshFile,create=.FALSE.,single=.TRUE.,readOnly=.TRUE.)
-
-        DO q=0, PP_NZ; DO p=0, PP_N
-            ! Calculate h_wm vector coords
-            h_wm_Coords = -1.*abs_h_wm*NormVec(:,p,q,0,iSide) + Face_xGP(:,p,q,0,iSide)
-
-            ! Set vars for first iteration on finding h_wm element
-            Loc_hwmElemID = SideToElem(S2E_ELEM_ID, iSide) ! Wall elem is always master of BC side
-            Glob_hwmElemID = Loc_hwmElemID+offsetElem ! +offset to put it in mesh-global numbers
-            GlobalOppSideID = SideToGlobalSide(iSide)
-
-            
-            
-            FoundhwmElem = .FALSE.
-
-            DO WHILE (.NOT. FoundhwmElem)
-                !> Given global element and global "lower side", get the "upper side"
-                
-                ! Check whose element is this, so that we read correct info from file
-                hwmRank = ELEMIPROC(Glob_hwmElemID)
-                SDEALLOCATE(OthersElemInfo)
-                ! FirstElemInd = offsetElemMPI(hwmRank)+1
-                ! LastElemInd = offsetElemMPI(hwmRank+1)
-                ! ALLOCATE(OthersElemInfo(6,FirstElemInd:LastElemInd))
-                ALLOCATE(OthersElemInfo(6))
-
-                IF (.NOT. (hwmRank.EQ.myRank)) THEN
-                    ! Read the correct portion of mesh file
-                    ! CALL ReadArray('ElemInfo',2,(/6,(LastElemInd-FirstElemInd+1)/),offsetElemMPI(hwmRank),2,IntArray=OthersElemInfo)
-                    CALL ReadArray('ElemInfo',2,(/6,1/),Glob_hwmElemID-1,2,IntArray=OthersElemInfo)
-                ELSE
-                    ! Use the ElemInfo already in memory from mesh read-in
-                    ! OthersElemInfo = ElemInfo
-                    OthersElemInfo(1:6) = ElemInfo(1:6,Glob_hwmElemID)
-                END IF
-
-                SDEALLOCATE(OthersSideInfo)
-                ! offsetSideID=OthersElemInfo(3,FirstElemInd) ! hdf5 array starts at 0-> -1
-                ! nSideIDs    =OthersElemInfo(4,LastElemInd)-OthersElemInfo(3,FirstElemInd)
-                offsetSideID=OthersElemInfo(3) ! hdf5 array starts at 0-> -1
-                nSideIDs    =OthersElemInfo(4)-OthersElemInfo(3)
-                    
-                FirstSideInd=offsetSideID+1
-                LastSideInd =offsetSideID+nSideIDs
-                ALLOCATE(OthersSideInfo(5,FirstSideInd:LastSideInd))
-
-                IF (.NOT. (hwmRank.EQ.myRank)) THEN
-                    ! Read the correct portion of mesh file
-                    CALL ReadArray('SideInfo',2,(/5,(nSideIDs)/),offsetSideID,2,IntArray=OthersSideInfo)
-                ELSE
-                    ! Use the SideInfo already in memory from mesh read-in
-                    ! OthersSideInfo = SideInfo
-                    OthersSideInfo(:,FirstSideInd:LastSideInd) = SideInfo(:,FirstSideInd:LastSideInd)
-                END IF
-
-                ! Scan the list of sides looking for a side with the Ind = GlobalOppSideID
-                ! If found, check if this side is inner to the GlobalhwmElement. (deprecated)
-                ! If so, we found our guy. Otherwise, we found the inner side of a neighbor. Keep looking. (deprecated)
-                DO i=FirstSideInd, LastSideInd
-                    IF (ABS(OthersSideInfo(2,i)) .EQ. GlobalOppSideID) THEN
-                        ! Ok, we found a candidate.
-                        ! IF ((i.GT.OthersElemInfo(3,Glob_hwmElemID)) .AND. (i.LE.OthersElemInfo(4,Glob_hwmElemID))) THEN
-                            ! Yes, this is our guy.
-                            InnerOppSideID = i
-                            EXIT
-                        ! END IF
-                    END IF
-                END DO
-
-                ! NodeCoords array was deallocated after mesh read-in, so we read it again regardless
-                CALL ReadArray('NodeCoords',2,(/3,(NGeo+1)**3/),(Glob_hwmElemID-1)*(NGeo+1)**3,2,RealArray=hwmElem_NodeCoords)
-                ! Now get opposite side of WMLES Side or of the previous side being analyzed and its coords
-                ! LocSide = InnerOppSideID - OthersElemInfo(3,Glob_hwmElemID)
-                LocSide = InnerOppSideID - OthersElemInfo(3)
-                SELECT CASE(LocSide)
-                CASE (ETA_MINUS)
-                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ETA_PLUS
-                    InnerOppSideID = OthersElemInfo(3) + ETA_PLUS
-                    OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,NGeo,0)
-                    OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,0,NGeo,NGeo)
-                    OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,NGeo,0)
-                    OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,NGeo)
-                    ! Compute the vector to check node approximation tolerance
-                    TolVec(:) = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
-                CASE (ETA_PLUS)
-                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ETA_MINUS
-                    InnerOppSideID = OthersElemInfo(3) + ETA_MINUS
-                    OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,0)
-                    OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,NGeo,0,0)
-                    OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,0,NGeo)
-                    OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,0,NGeo)
-                    ! Compute the vector to check node approximation tolerance
-                    TolVec(:) = hwmElem_NodeCoords(:,0,NGeo,0) - hwmElem_NodeCoords(:,0,0,0)
-                CASE (XI_MINUS)
-                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_PLUS
-                    InnerOppSideID = OthersElemInfo(3) + XI_PLUS
-                    OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,NGeo,0,0)
-                    OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,NGeo,NGeo,0)
-                    OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,0,NGeo)
-                    OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,NGeo)
-                    ! Compute the vector to check node approximation tolerance
-                    TolVec(:) = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
-                CASE (XI_PLUS)
-                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + XI_MINUS
-                    InnerOppSideID = OthersElemInfo(3) + XI_MINUS
-                    OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,0)
-                    OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,0,0,NGeo)
-                    OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,NGeo,0)
-                    OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,0,NGeo,NGeo)
-                    ! Compute the vector to check node approximation tolerance
-                    TolVec(:) = hwmElem_NodeCoords(:,NGeo,0,0) - hwmElem_NodeCoords(:,0,0,0)
-                CASE (ZETA_MINUS)
-                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_PLUS
-                    InnerOppSideID = OthersElemInfo(3) + ZETA_PLUS
-                    OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,NGeo)
-                    OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,NGeo,0,NGeo)
-                    OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,0,NGeo,NGeo)
-                    OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,NGeo)
-                    ! Compute the vector to check node approximation tolerance
-                    TolVec(:) = hwmElem_NodeCoords(:,0,0,NGeo) - hwmElem_NodeCoords(:,0,0,0)
-                CASE (ZETA_PLUS)
-                    ! InnerOppSideID = OthersElemInfo(3,Glob_hwmElemID) + ZETA_MINUS
-                    InnerOppSideID = OthersElemInfo(3) + ZETA_MINUS
-                    OppSideNodeCoords(:,1) = hwmElem_NodeCoords(:,0,0,0)
-                    OppSideNodeCoords(:,2) = hwmElem_NodeCoords(:,0,NGeo,0)
-                    OppSideNodeCoords(:,3) = hwmElem_NodeCoords(:,NGeo,0,0)
-                    OppSideNodeCoords(:,4) = hwmElem_NodeCoords(:,NGeo,NGeo,0)
-                    ! Compute the vector to check node approximation tolerance
-                    TolVec(:) = hwmElem_NodeCoords(:,0,0,NGeo) - hwmElem_NodeCoords(:,0,0,0)
-                END SELECT
-
-                GlobalOppSideID = ABS(OthersSideInfo(2,InnerOppSideID))
-
-                ! Set node approximation tolerance (sphere radius) to 10% of the distance
-                ! between interpolation nodes based on equidistant distribution
-                RealTmp = 0
-                DO k=1,3
-                    RealTmp = RealTmp + TolVec(k)**2
-                END DO
-                RealTmp = 0.1*SQRT(RealTmp)/DBLE(PP_N)
-                IF (WMLES_Tol .GT. RealTmp) WMLES_Tol = RealTmp
-                
-                ! Check if h_wmVec lies above or below this opposite side
-
-                !> Calculate the normal vector of the opposite side (assume 4 coplanar vertices)
-                !> -- Since the 4 vertices are assumed coplanar, take arbitrarily 3 and compute normal
-                ! In this case, it is not strictly arbitrary 3 points. Which ones we take is set
-                ! within the case selection above. These guarantee an outward normal
-                OppSideEdge(:,1) = OppSideNodeCoords(:,2) - OppSideNodeCoords(:,1)
-                OppSideEdge(:,2) = OppSideNodeCoords(:,3) - OppSideNodeCoords(:,1)
-
-                OppSideNormal(1) = OppSideEdge(2,1)*OppSideEdge(3,2) - OppSideEdge(3,1)*OppSideEdge(2,2)
-                OppSideNormal(2) = OppSideEdge(3,1)*OppSideEdge(1,2) - OppSideEdge(1,1)*OppSideEdge(3,2)
-                OppSideNormal(3) = OppSideEdge(1,1)*OppSideEdge(2,2) - OppSideEdge(2,1)*OppSideEdge(1,2)
-
-                hwmDistVec(:) = h_wm_Coords(:) - OppSideNodeCoords(:,1)
-
-                RealTmp = DOT_PRODUCT(OppSideNormal, hwmDistVec)
-
-                IF (ABS(RealTmp) .LE. WMLES_Tol) THEN ! Lies on face (angle between vecs ~ 90 degrees)
-                    ! Mark as "next element" so info is retrieved from the approximation further away from the wall
-                    Glob_hwmElemID = ABS(OthersSideInfo(3,InnerOppSideID))
-                    FoundhwmElem = .TRUE.
-                ELSE
-                    IF (RealTmp .LE. 0) THEN ! Lies within this element
-                        ! Mark as within this element.
-                        ! Then set the loop var to false so that we can go to the next step, of finding
-                        ! which MPI proc is the owner of this element.
-                        FoundhwmElem = .TRUE.
-
-                    ELSE ! Is not within this element
-                        ! Mark as probably being within the next element -- needs check after looping
-                        Glob_hwmElemID = ABS(OthersSideInfo(3,InnerOppSideID))
-                    END IF
-                END IF
-
-                IF (Glob_hwmElemID .EQ. 0) THEN
-                    ! We reached the opposite boundary!! Something is wrong...
-                    CALL CollectiveStop(__STAMP__, 'Error defining h_wm element -- Possibly reached the opposite boundary!')
-                END IF
-
-            END DO ! do while
-
-            ! Found h_wm element for this p,q face point
-            LOGWRITE(*,'((A11,2x),4(I4,2X))') "hwmElemInfo", p, q, Glob_hwmElemID, ELEMIPROC(Glob_hwmElemID)
-
-            hwmRank = ELEMIPROC(Glob_hwmElemID)
-            WallStressCount_local(hwmRank) = WallStressCount_local(hwmRank) + 1
-            TauW_Proc_tmp(1,p,q,nWMLESSides) = hwmRank
-            TauW_Proc_tmp(2,p,q,nWMLESSides) = WallStressCount_local(hwmRank)
-            OthersPointInfo(1:3,WallStressCount_local(hwmRank),hwmRank) = h_wm_Coords
-            ! Inward normal vector (hence the minus sign)
-            OthersPointInfo(4:6,WallStressCount_local(hwmRank),hwmRank) = -NormVec(:,p,q,0,iSide)
-            OthersPointInfo(7,WallStressCount_local(hwmRank),hwmRank) = Glob_hwmElemID
-
-        END DO; END DO ! p, q
-
-        CALL CloseDataFile()
-    END IF ! 
+    END IF
 END DO
-SDEALLOCATE(OthersSideInfo)
-SDEALLOCATE(OthersElemInfo)
 
-CALL MPI_REDUCE(nWMLESSides, TotalNWMLESSides, 1, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_FLEXI, iError)
-IF (MPIRoot .AND. (TotalNWMLESSides .EQ. 0)) THEN
-    CALL PrintWarning('A Wall Model is set up, but no BoundaryConditions'// &
-                                ' of WMLES Type has been found on the Mesh/Parameter File!')
-END IF 
+! Allocate the final array, with the right number of elements, and free the excess memory
+ALLOCATE(WMLESToBCSide(nWMLESSides))
+DO iSide=1,nWMLESSides
+    WMLESToBCSide(iSide) = WMLESToBCSide_tmp(iSide)
+END DO
+DEALLOCATE(WMLESToBCSide_tmp)
+
+! Sanity check
+#if USE_MPI
+CALL MPI_REDUCE(nWMLESSides,TotalNWMLESSides,1,MPI_INTEGER,MPI_SUM,0,MPI_COMM_FLEXI,iError)
+IF (myRank.EQ.0) THEN
+    IF (TotalNWMLESSides .NE. nWMLESSides_global) CALL Abort(__STAMP__, &
+        'Total number of WMLES Sides does not match the total modeled sides in the connection file!')
+END IF
+#endif /* USE_MPI */
+
+! We now loop over all modeled sides from the WM Connection file, and check the sides that correspond
+! to any of the WMLES side in this proc., so that we can store information about receiving communication
+! In order to do so, we use a trick available due to the way the mesh is partitioned.
+! From the partitioning method, we know that each consecutive MPI process holds consecutive
+! BC sides (because they are sorted in increasing order in the mesh process). 
+! Hence, we gather information about the range of BC sides for each of the current MPI procs., and store
+! the offset values (in global terms) where the BC sides in this proc. starts.
+! Then, we check the global side number of the modeled side (WM Conn file) against these ranges (given by
+! the offset) to see if this proc. owns the side locally. If so, we store receiving information
 
 #if USE_MPI
-!> Reduce and broadcast the minimun node approximation tolerance found in the previous steps
-IF (MPIRoot) THEN
-    CALL MPI_REDUCE(MPI_IN_PLACE, WMLES_Tol, 1, MPI_DOUBLE_PRECISION, MPI_MIN, 0, MPI_COMM_FLEXI, iError)
-ELSE
-    CALL MPI_REDUCE(WMLES_Tol, WMLES_Tol, 1, MPI_DOUBLE_PRECISION, MPI_MIN, 0, MPI_COMM_FLEXI, iError)
-END IF
-CALL MPI_BCAST(WMLES_Tol, 1, MPI_DOUBLE_PRECISION, 0, MPI_COMM_FLEXI, iError)
+ALLOCATE(nBCSidesPerProc(0:nProcessors-1))
+nBCSidesPerProc = 0
+nBCSidesPerProc(myRank) = nBCSides
+CALL MPI_ALLREDUCE(MPI_IN_PLACE,nBCSidesPerProc,nProcessors,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,iError)
+offsetBCSides = SUM(nBCSidesPerProc(0:myRank-1))
+DEALLOCATE(nBCSidesPerProc)
+#else
+! No MPI means no offset for the sides
+offsetBCSides = 0
+#endif /* USE_MPI */
 
-!> Sum up all tau_w counts and broadcast this info so that
-!> every MPI proc knows it (and not only those who actually computed it)
-CALL MPI_REDUCE(WallStressCount_local, WallStressCount, nProcessors, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_FLEXI, iError)
-CALL MPI_BCAST(WallStressCount, nProcessors, MPI_INTEGER, 0, MPI_COMM_FLEXI, iError)
-#endif
+ALLOCATE(HWMSendInfo_tmp(nHWMPropSend+4, nWMLESSides_global*(PP_N+1)*(PP_N+1), 0:nProcessors-1))
+ALLOCATE(HWMRecvInfo_tmp(4, nWMLESSides_global*(PP_N+1)*(PP_N+1), 0:nProcessors-1))
+ALLOCATE(HWMInterpInfo_tmp(4, nWMLESSides_global*(PP_N+1)*(PP_N+1)))
+ALLOCATE(nHWMSendPoints_tmp(0:nProcessors-1))
+ALLOCATE(nHWMRecvPoints_tmp(0:nProcessors-1))
+ALLOCATE(HWMLocalInfo_tmp(4, nWMLESSides_global*(PP_N+1)*(PP_N+1)))
+ALLOCATE(LocalToInterpPoint_tmp(nWMLESSides_global*(PP_N+1)*(PP_N+1)))
+ALLOCATE(SendToInterpPoint_tmp(nWMLESSides_global*(PP_N+1)*(PP_N+1), 0:nProcessors-1))
+ALLOCATE(WMLESRecvFromProc(0:nProcessors-1))
+ALLOCATE(WMLESSendToProc(0:nProcessors-1))
 
-!> Mount data and send it to other procs (non-blocking)
-CalcInfoRequests = MPI_REQUEST_NULL
-PointInfoRequests = MPI_REQUEST_NULL
-nProcs_RecvTauW = 0
-IF (nWMLESSides .NE. 0) THEN
-    ALLOCATE(Proc_RecvTauW_Inv(0:nProcessors-1))
-    Proc_RecvTauW_Inv = -1
-    Proc_RecvTauW_Inv(myRank) = 0
-    DO i=0,nProcessors-1
-        IF (i .EQ. myRank) CYCLE
-        IF (WallStressCount_local(i) .GT. 0) THEN
-            nProcs_RecvTauW = nProcs_RecvTauW + 1
-            Proc_RecvTauW_tmp(nProcs_RecvTauW) = i
-            Proc_RecvTauW_Inv(i) = nProcs_RecvTauW
-            ! First, send a message for each proc. that need to calculate tau_w for you
-            ! containing your rank and how many points they will calculate for you (tag: 0)
-            nPoints_YOUR_tmp(1) = myRank
-            nPoints_YOUR_tmp(2) = WallStressCount_local(i)
-            CALL MPI_ISEND(nPoints_YOUR_tmp,2,MPI_INTEGER,i,0,MPI_COMM_FLEXI,CalcInfoRequests(i),iError)
-            !CALL MPI_Request_Free(sendRequest, iError)
-            ! Then, send the message itself (tag: 1)
-            CALL MPI_ISEND(OthersPointInfo(:,:,i),7*WallStressCount_local(i),MPI_DOUBLE_PRECISION,i,1,MPI_COMM_FLEXI,PointInfoRequests(i),iError)
-            !CALL MPI_Request_Free(sendRequest, iError)
-        END IF
-    END DO
-END IF
+! Initializing the allocated memory values
 
-!> Check if we need to receive any data from other procs
-nProcs_SendTauW = 0
-nPoints_MINE_tmp2 = 0
-IF (WallStressCount(myRank) .NE. 0) THEN
-    IF (WallStressCount_local(myRank) .NE. WallStressCount(myRank)) THEN ! I calculate info for other procs
-        MineCnt = WallStressCount_local(myRank)
-        DO WHILE (MineCnt .LT. WallStressCount(myRank))
-            CALL MPI_RECV(nPoints_MINE_tmp,2,MPI_INTEGER,MPI_ANY_SOURCE,0,MPI_COMM_FLEXI,iStat,iError)
-            nPoints_MINE_tmp2(nPoints_MINE_tmp(1)) = nPoints_MINE_tmp(2)
-            MineCnt = MineCnt + nPoints_MINE_tmp(2)
-            nProcs_SendTauW = nProcs_SendTauW + 1
-            Proc_SendTauW_tmp(nProcs_SendTauW) = nPoints_MINE_tmp(1)
-        END DO
+WMLESRecvFromProc = .FALSE. ! Flag to check whether we receive anything from this proc.
+WMLESSendToProc = .FALSE. ! Flag to check whether we send anything to this proc.
+HWMSendInfo_tmp = 0.
+HWMRecvInfo_tmp = 0
+HWMInterpInfo_tmp = 0.
+nHWMSendPoints_tmp = 0
+nHWMRecvPoints_tmp = 0
+HWMLocalInfo_tmp = 0
+LocalToInterpPoint_tmp = 0
+SendToInterpPoint_tmp = 0
+nHWMLocalPoints = 0
+nHWMInterpPoints = 0
+nWMLESRecvProcs = 0
+nWMLESSendProcs = 0
 
+
+DO iGlobalSide=1, nWMLESSides_global
+    IF ((iGlobalSide.GT.offsetBCSides) .AND. (iGlobalSide.LE.(offsetBCSides+nBCSides))) THEN ! Local BC side!
+        ! Sanity check
+        IF (BCSideToWMLES(iGlobalSide-offsetBCSides) .EQ. 0) CALL Abort(__STAMP__, &
+            'Modeled local BC found in WM Connection file, but it has not been marked as a WMLES Side using the current config./mesh!')
+
+        iWMLESSide = BCSideToWMLES(iGlobalSide-offsetBCSides)
+
+        ! We now check if we need to receive h_wm point info from another proc., or if h_wm is within a local element
+        ! This check is done for each GL point within this BC side
+        DO p=0,PP_N; DO q=0,PP_N
+
+            iElem = INT(WMConnection(INTERFACE_ELEMSEND,p,q,iGlobalSide)) ! Global ElemID
+            IF ((iElem.GT.offsetElem) .AND. (iElem.LE.(offsetElem+nElems))) THEN
+                ! Element where h_wm lies is local to this proc
+                ! Hence, no communication will be needed. 
+                ! We count this h_wm point as "interpolation needed", and store standard coordinate 
+                ! information for later interpolation
+                ! We also store the BC global side and the p,q, point that this interpolation corresponds to
+
+                nHWMLocalPoints = nHWMLocalPoints + 1
+                nHWMInterpPoints = nHWMInterpPoints + 1
+
+                LocalToInterpPoint_tmp(nHWMLocalPoints) = nHWMInterpPoints
+
+                HWMLocalInfo_tmp(1:4, nHWMLocalPoints) = (/WMConnection(INTERFACE_L,p,q,iGlobalSide), REAL(p), REAL(q), REAL(iWMLESSide)/)
+                HWMInterpInfo_tmp(:,nHWMInterpPoints) = (/REAL(iElem-offsetElem), & ! All elements in the array construction must be of the same type.
+                                                        WMConnection(INTERFACE_XI, p, q, iGlobalSide), &
+                                                        WMConnection(INTERFACE_ETA,p, q, iGlobalSide), &
+                                                        WMConnection(INTERFACE_ZETA,p,q, iGlobalSide)/)
+
+            ELSE
+                ! Element where h_wm lies is in another proc.
+                ! Hence, we set up the communication info to receive h_wm later
+
+                ! Get the proc. rank responsible for the element containing h_wm
+                iProc = ELEMIPROC(iElem)
+
+                nHWMRecvPoints_tmp(iProc) = nHWMRecvPoints_tmp(iProc) + 1 ! Number of flow props to receive from this proc.
+                IF (.NOT.WMLESRecvFromProc(iProc)) THEN ! Check if we've come across this receiving rank yet
+                    nWMLESRecvProcs = nWMLESRecvProcs + 1 ! Sum up the number of procs to receive info from
+                    !WMLESRecvProc_tmp(nWMLESRecvProcs) = iProc
+                    WMLESRecvFromProc(iProc) = .TRUE.
+                END IF
+
+                HWMRecvInfo_tmp(1:4, nHWMRecvPoints_tmp(iProc), iProc) = (/WMConnection(INTERFACE_L, p, q, iGlobalSide), REAL(p), REAL(q), REAL(iWMLESSide)/)
+
+            END IF ! IF ELSE element containing h_wm is local to this proc.
+        END DO; END DO ! p, q
+
+    ELSE 
+        ! This global WMLES Side is not within this proc.
+        ! However, this proc. may need to SEND h_wm info to the rank responsible for the BC imposition on this side
+
+        DO p=0,PP_N; DO q=0,PP_N
+
+            iElem = INT(WMConnection(INTERFACE_ELEMSEND,p,q,iGlobalSide)) ! Global ElemID
+            IF ((iElem.GT.offsetElem) .AND. (iElem.LE.(offsetElem+nElems))) THEN
+                ! This proc. is not responsible for WMLES BC imposition, but it contains
+                ! the info in h_wm point.
+                ! Hence, we need to SEND this info to the proc. responsible for BC imposition
+
+                iProc = ELEMIPROC(INT(WMConnection(INTERFACE_ELEMRECV,p,q,iGlobalSide)))
+
+                nHWMSendPoints_tmp(iProc) = nHWMSendPoints_tmp(iProc) + 1 ! Number of flow props to send to the responsible rank
+                IF (.NOT.WMLESSendToProc(iProc)) THEN
+                    nWMLESSendProcs = nWMLESSendProcs + 1 ! Sum up the number of procs to send the info
+                    !WMLESSendProc_tmp(nWMLESSendProcs) = iProc
+                    WMLESSendToProc(iProc) = .TRUE.
+                END IF
+
+                ! We now store the information needed for sending flow props at h_wm location
+                ! Besides sending the flow properties needed for the model, we also send
+                ! the corresponding BC Global Side and the p,q point where the receiving rank
+                ! should use these flow properties 
+                DO i=1,nHWMPropSend
+                    HWMSendInfo_tmp(i,nHWMSendPoints_tmp(iProc),iProc) = 0.
+                END DO
+
+                ! IMPORTANT NOTE:
+                ! There are two ways to design the send-receiving communication, in terms of the information
+                ! contained in each message.
+                ! The first one is to make the info about which side/point corresponds to the flow property
+                ! being sent as part of the message itself. This would be the general (and least bugged)
+                ! way to do it.
+                ! The second way is to create a mapping from the receiving info (flow properties) to the 
+                ! corresponding modeled side/point. Depending on the way the parallel framework is designed,
+                ! this may be rather tricky. However, in this case, it is not. Since all MPI procs. are reading info 
+                ! from the WM Connection file in the same order (i.e., from 1:N global side, and for each side, from 
+                ! p=0, q=0,...,Np, p=1, q=0,...,Np etc), then, we are guaranteed that whenever an MPI proc. identify 
+                ! a side/point that needs to receive information, this side/point will be identified by the 
+                ! counterpart MPI proc (the sending proc.) at the same iteration step through the WM connection info. 
+                ! Hence, we are sure that, e.g., the first receiving info from MPI proc. #X corresponds to the first 
+                ! point we identified as being owned by MPI proc. #X, in the receiving counterpart.
+                ! Anyway, the first approach is being used here since it prevents bugs from this "automatic" and
+                ! fortunate mapping (due to the way the parallel domain decomposition is done and how we read the info)
+                
+                HWMSendInfo_tmp(nHWMPropSend+1:nHWMPropSend+4,nHWMSendPoints_tmp(iProc),iProc) = (/WMConnection(INTERFACE_L,p,q,iGlobalSide), REAL(p), REAL(q), REAL(iGlobalSide)/)
+
+                nHWMInterpPoints = nHWMInterpPoints + 1
+                HWMInterpInfo_tmp(:,nHWMInterpPoints) = (/REAL(iElem-offsetElem), &
+                                                        WMConnection(INTERFACE_XI, p, q, iGlobalSide), &
+                                                        WMConnection(INTERFACE_ETA,p, q, iGlobalSide), &
+                                                        WMConnection(INTERFACE_ZETA,p,q, iGlobalSide)/)
+
+                SendToInterpPoint_tmp(nHWMSendPoints_tmp(iProc), iProc) = nHWMInterpPoints
+
+            END IF ! IF element containing h_wm is local to this proc.
+
+        END DO; END DO ! p, q
+    END IF ! IF ELSE Local BC Side
+END DO
+
+! In order to reduce memory usage, we re-map the SendToInterp vector, ordering Send Points from the
+! lowest to the highest MPI rank, sequentially. Therefore, we also need to re-map HWMInterpInfo.
+ALLOCATE(nHWMSendPoints(0:nWMLESSendProcs))
+ALLOCATE(SendToInterpPoint(SUM(nHWMSendPoints_tmp)))
+ALLOCATE(WMLESSendProc(nWMLESSendProcs))
+ALLOCATE(HWMSendInfo(nHWMPropSend+4, SUM(nHWMSendPoints_tmp)))
+ALLOCATE(WMLESSendRange(2,nWMLESSendProcs))
+
+nHWMSendPoints(0) = 0
+nWMLESSendProcs = 0 ! We will recount this
+DO iProc=0, nProcessors-1
+    IF (WMLESSendToProc(iProc)) THEN
+        nWMLESSendProcs = nWMLESSendProcs + 1
+        WMLESSendProc(nWMLESSendProcs) = iProc
+        nHWMSendPoints(nWMLESSendProcs) = nHWMSendPoints_tmp(iProc)
+
+        WMLESSendRange(1,nWMLESSendProcs) = SUM(nHWMSendPoints(:nWMLESSendProcs-1))+1
+        WMLESSendRange(2,nWMLESSendProcs) = SUM(nHWMSendPoints(:nWMLESSendProcs))
+
+        HWMSendInfo(:, WMLESSendRange(1,nWMLESSendProcs):WMLESSendRange(2,nWMLESSendProcs)) = HWMSendInfo_tmp(:, 1:nHWMSendPoints_tmp(iProc), iProc)
+
+        SendToInterpPoint(WMLESSendRange(1,nWMLESSendProcs):WMLESSendRange(2,nWMLESSendProcs)) = SendToInterpPoint_tmp(1:nHWMSendPoints_tmp(iProc), iProc)
     END IF
-END IF
-
-!> Free some space: allocate and populate permanent information, delete temporaries
-ALLOCATE(WMLESToBCSide(nWMLESSides))
-ALLOCATE(TauW_Proc(2,0:PP_N, 0:PP_NZ, nWMLESSides))
-ALLOCATE(Proc_RecvTauW(nProcs_RecvTauW))
-ALLOCATE(Proc_SendTauW(nProcs_SendTauW))
-ALLOCATE(nTauW_MINE(0:nProcs_SendTauW)) ! index 0 are my LOCAL points
-ALLOCATE(nTauW_YOURS(nProcs_RecvTauW))
-
-DO i=1,nWMLESSides
-    WMLESToBCSide(i) = WMLESToBCSide_tmp(i)
-    DO q=0,PP_NZ; DO p=0,PP_N
-        TauW_Proc(:,p,q,i) = TauW_Proc_tmp(:,p,q,i)
-    END DO; END DO ! p,q
 END DO
-DO i=1,nProcs_RecvTauW
-    Proc_RecvTauW(i) = Proc_RecvTauW_tmp(i)
-    nTauW_YOURS(i) = WallStressCount_local(Proc_RecvTauW(i))
-END DO
-DO i=1,nProcs_SendTauW
-    Proc_SendTauW(i) = Proc_SendTauW_tmp(i)
-    nTauW_MINE(i) = nPoints_MINE_tmp2(Proc_SendTauW(i))
-END DO
-nTauW_MINE(0) = WallStressCount_local(myRank)
-DEALLOCATE(WMLESToBCSide_tmp)
-DEALLOCATE(TauW_Proc_tmp)
 
-!> Those procs who need to receive data, do it now.
-!> Once received, check if the points may be approximated by any interpolation node,
-!> or if we need to interpolate the solution
-ALLOCATE(PointInfo(7,MAXVAL(nTauW_MINE)))
-ALLOCATE(TauW_MINE_FacePoint(3,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(TauW_MINE_InteriorPoint(4,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(TauW_MINE_Interpolate(4,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(TauW_MINE_NormVec(3,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
+! The same logic above is done for the receiving buffer, just so that we store the receiving ranges
+! according to each MPI rank to receive from
+ALLOCATE(WMLESRecvProc(nWMLESRecvProcs))
+ALLOCATE(nHWMRecvPoints(0:nWMLESRecvProcs))
+ALLOCATE(HWMRecvInfo(nHWMPropSend+4, SUM(nHWMRecvPoints_tmp)))
+ALLOCATE(WMLESRecvRange(2,nWMLESRecvProcs))
 
-IF (Logging) THEN ! Logging info only
-ALLOCATE(TauW_MINE_IsFace(MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(TauW_MINE_IsInterior(MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(TauW_MINE_IsInterpolation(MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-TauW_MINE_IsFace = .FALSE.
-TauW_MINE_IsInterior = .FALSE.
-TauW_MINE_IsInterpolation = .FALSE.
-END IF
+nWMLESRecvProcs = 0 ! We will recount this
+nHWMRecvPoints(0) = 0
+DO iProc=0, nProcessors-1
+    IF (WMLESRecvFromProc(iProc)) THEN
+        nWMLESRecvProcs = nWMLESRecvProcs + 1
+        WMLESRecvProc(nWMLESRecvProcs) = iProc
+        nHWMRecvPoints(nWMLESRecvProcs) = nHWMRecvPoints_tmp(iProc)
 
-ALLOCATE(nTauW_MINE_FacePoint(0:nProcs_SendTauW))
-ALLOCATE(nTauW_MINE_InteriorPoint(0:nProcs_SendTauW))
-ALLOCATE(nTauW_MINE_Interpolate(0:nProcs_SendTauW))
-ALLOCATE(FaceToLocalPoint(MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(InteriorToLocalPoint(MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(InterpToLocalPoint(MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
+        WMLESRecvRange(1,nWMLESRecvProcs) = SUM(nHWMRecvPoints(:nWMLESRecvProcs-1))+1
+        WMLESRecvRange(2,nWMLESRecvProcs) = SUM(nHWMRecvPoints(:nWMLESRecvProcs))
 
-nTauW_MINE_FacePoint = 0
-nTauW_MINE_InteriorPoint = 0
-nTauW_MINE_Interpolate = 0
-FaceToLocalPoint = 0
-InteriorToLocalPoint = 0
-InterpToLocalPoint = 0
-
-
-
-DO i=0,nProcs_SendTauW
-    IF (i.NE.0) THEN 
-        CALL MPI_RECV(PointInfo,7*nTauW_MINE(i),MPI_DOUBLE_PRECISION,Proc_SendTauW(i),1,MPI_COMM_FLEXI,iStat,iError)
-    ELSE
-        IF (nTauW_MINE(0).NE.0) PointInfo(:,1:WallStressCount_local(myRank)) = OthersPointInfo(:,1:WallStressCount_local(myRank),myRank)
+        HWMRecvInfo(nHWMPropSend+1:nHWMPropSend+4, WMLESRecvRange(1,nWMLESRecvProcs):WMLESRecvRange(2,nWMLESRecvProcs)) = HWMRecvInfo_tmp(1:4, 1:nHWMRecvPoints_tmp(iProc), iProc)
     END IF
+END DO
 
-    ! Store inward wall-normal vector
-    IF (nTauW_MINE(i).NE.0) TauW_MINE_NormVec(1:3,1:nTauW_MINE(i),i) = PointInfo(4:6,1:nTauW_MINE(i))
-    
-    DO j=1,nTauW_MINE(i)
+! Memory bookeeping (allocate the minimum necessary memory, and free the excess from the temp variables)
+ALLOCATE(HWMInterpInfo(4, nHWMInterpPoints))
+ALLOCATE(LocalToInterpPoint(nHWMLocalPoints))
+ALLOCATE(HWMLocalInfo(4, nHWMLocalPoints))
 
-        ! For each point to calculate tau_w for this proc, check whether it may be
-        ! approximated by a point inside the element or if interpolation is needed.
+DO i=1,nHWMInterpPoints
+    HWMInterpInfo(1:4, i) = HWMInterpInfo_tmp(1:4, i)
+END DO
 
-        ! Global to local element ID
-        Loc_hwmElemID = INT(PointInfo(7,j))-offsetElem
+DO i=1,nHWMLocalPoints
+    LocalToInterpPoint(i) = LocalToInterpPoint_tmp(i)
+    HWMLocalInfo(1:4, i) = HWMLocalInfo_tmp(1:4, i)
+END DO
 
-        FoundhwmPoint = .FALSE.
-        ! Start from faces
-        ! DO LocSide=1,6
-        !     IF (FoundhwmPoint) EXIT
 
-        !     SideID = ElemToSide(E2S_SIDE_ID, LocSide, Loc_hwmElemID)
-        !     CALL GetOppositeSide(SideID, Loc_hwmElemID, OppSideID)
-        !     DO q=0,PP_NZ
-        !         IF (FoundhwmPoint) EXIT
-        !         DO p=0,PP_N
-        !             IF (FoundhwmPoint) EXIT
-        !             DistanceVect = PointInfo(1:3,j) - Face_xGP(1:3,p,q,0,SideID)
-        !             Distance = 0.
-        !             DO k=1,3
-        !                 Distance = Distance + DistanceVect(k)**2
-        !             END DO
-        !             Distance = SQRT(Distance)
-        !             IF (Distance .LE. WMLES_Tol) THEN ! May be approximated by this point, in this face
-        !                 IF (Logging) TauW_MINE_IsFace(j,i) = .TRUE.
-        !                 nTauW_MINE_FacePoint(i) = nTauW_MINE_FacePoint(i) + 1
-        !                 FaceToLocalPoint(nTauW_MINE_FacePoint(i),i) = j
-        !                 TauW_MINE_FacePoint(:,nTauW_MINE_FacePoint(i),i) = (/p,q,SideID/)
-        !                 FoundhwmPoint = .TRUE.
-        !             END IF
-        !         END DO ! p
-        !     END DO ! q
-        ! END DO ! LocSide
+!> =-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-
+!> Logging Information (mainly for debugging purposes)
+!> =-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-
 
-        ! If the point could not be approximated by a face point, 
-        ! then check within the element
-        ! DO r=0,PP_NZ
-        !     IF (FoundhwmPoint) EXIT
-        !     DO q=0,PP_N
-        !         IF (FoundhwmPoint) EXIT
-        !         DO p=0,PP_N
-        !             IF (FoundhwmPoint) EXIT
-        !             DistanceVect(:) = PointInfo(1:3,j) - Elem_xGP(1:3,p,q,r,Loc_hwmElemID)
-        !             Distance = 0
-        !             DO k=1,3
-        !                 Distance = Distance + DistanceVect(k)**2
-        !             END DO
-        !             Distance = SQRT(Distance)
-        !             IF (Distance .LE. WMLES_Tol) THEN ! May be approximated by this point
-        !                 IF (Logging) TauW_MINE_IsInterior(j,i) = .TRUE.
-        !                 nTauW_MINE_InteriorPoint(i) = nTauW_MINE_InteriorPoint(i) + 1
-        !                 InteriorToLocalPoint(nTauW_MINE_InteriorPoint(i),i) = j
-        !                 TauW_MINE_InteriorPoint(:,nTauW_MINE_InteriorPoint(i),i) = (/p,q,r,Loc_hwmElemID/)
-        !                 FoundhwmPoint = .TRUE.
-        !             END IF
-        !         END DO ! p
-        !     END DO ! q
-        ! END DO ! r
-
-        ! If the point may not be approximated neither by a face nor an interior point,
-        ! then we must interpolate.
-        IF (.NOT.FoundhwmPoint) THEN ! Interpolate
-            IF (Logging) TauW_MINE_IsInterpolation(j,i) = .TRUE.
-            nTauW_MINE_Interpolate(i) = nTauW_MINE_Interpolate(i) + 1
-            InterpToLocalPoint(nTauW_MINE_Interpolate(i),i) = j
-            !> Map h_wm coords from physical to local (standard) coords and save this info
-            CALL PhysToStdCoords(PointInfo(1:3,j),Loc_hwmElemID,TauW_MINE_Interpolate(1:3,nTauW_MINE_Interpolate(i),i))
-            TauW_MINE_Interpolate(4,nTauW_MINE_Interpolate(i),i) = Loc_hwmElemID
-        END IF
-    END DO ! j -- each point that we must calculate tau_w, for this MPI process i
-
-    ! Sanity check
-    IF ((nTauW_MINE_FacePoint(i)+nTauW_MINE_Interpolate(i)+nTauW_MINE_InteriorPoint(i)) &
-                .NE. nTauW_MINE(i)) CALL Abort(__STAMP__,"Dangling points?")
-
-END DO ! i -- message from each process having a BC side which needs our calculation of tau_w
-
-! Check if there are interpolation points to calculate in this MPI proc., so that we set up
-! and store the Lagrange polynomials calculated at each point
-IF (MAXVAL(nTauW_MINE_Interpolate).GT.0) THEN 
-    ! Set up the Lagrangian interpolating polynomials for each interp. node.
-    ALLOCATE(Lag_xi(0:PP_N,MAXVAL(nTauW_MINE_Interpolate),0:nProcs_SendTauW))
-    ALLOCATE(Lag_eta(0:PP_N,MAXVAL(nTauW_MINE_Interpolate),0:nProcs_SendTauW))
-    ALLOCATE(Lag_zeta(0:PP_N,MAXVAL(nTauW_MINE_Interpolate),0:nProcs_SendTauW))
-    DO i=0,nProcs_SendTauW
-        DO j=1,nTauW_MINE_Interpolate(i)
-            CALL LagrangeInterpolationPolys(TauW_MINE_Interpolate(1,j,i),PP_N,xGP,wBary,Lag_xi(:,j,i))
-            CALL LagrangeInterpolationPolys(TauW_MINE_Interpolate(2,j,i),PP_N,xGP,wBary,Lag_eta(:,j,i))
-            CALL LagrangeInterpolationPolys(TauW_MINE_Interpolate(3,j,i),PP_N,xGP,wBary,Lag_zeta(:,j,i))
-        END DO
-    END DO
-END IF
-
-!> Set up variables for MPI and actual TauW values 
-ALLOCATE(WMLES_TauW(2,0:PP_N,0:PP_NZ,nWMLESSides))
-ALLOCATE(TauW_MINE(2,MAXVAL(nTauW_MINE),0:nProcs_SendTauW))
-ALLOCATE(TauW_YOURS(2,MAXVAL(WallStressCount_local),0:nProcs_RecvTauW))
-ALLOCATE(WMLES_RecvRequests(nProcs_RecvTauW))
-ALLOCATE(WMLES_SendRequests(nProcs_SendTauW))
-
-!> =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-!> Dump Logging/Debugging Information
-!> =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
-LOGWRITE(*,*) "====================== START WMLES Info ===================="
-LOGWRITE(*,'(A35,ES16.6)') 'Distance h_wm from the wall:', abs_h_wm
-LOGWRITE(*,'(A35,I16)') 'Local WMLES BC Sides:', nWMLESSides
-LOGWRITE(*,'(A35,I16)') 'Local WMLES BC Poins:', nWMLESSides*(PP_N+1)*(PP_NZ+1)
-LOGWRITE(*,'(A35,I6)') 'Local Tau_w Count:', WallStressCount_local(myRank)
-LOGWRITE(*,'(A35,I6)') 'Total Tau_w Count:', WallStressCount(myRank)
-LOGWRITE(*,*) '---------------------------------------'
-LOGWRITE(*,*) "======= Tau_w Points which are my responbility ======"
-LOGWRITE(*,'(2(A15),A15,A20,A25)') 'Origin MPI Rank', 'Local Point', 'Face Point', 'Interior Point', 'Interpolation Point'
-DO i=0,nProcs_SendTauW
-    MineCnt=0
-    DO k=i-1,0,-1
-        MineCnt=MineCnt+nTauW_MINE(k)
-    END DO
-    DO j=1,nTauW_MINE(i)
-        IF (i.EQ.0) THEN
-            LOGWRITE(*,'(I10,I15,L15,L20,L25)') myRank, j+MineCnt, TauW_MINE_IsFace(j,i), TauW_MINE_IsInterior(j,i), TauW_MINE_IsInterpolation(j,i)
-        ELSE
-            LOGWRITE(*,'(I10,I15,L15,L20,L25)') Proc_SendTauW(i), j+MineCnt, TauW_MINE_IsFace(j,i), TauW_MINE_IsInterior(j,i), TauW_MINE_IsInterpolation(j,i)
-        END IF
+LOGWRITE(*,'(20("=-"))') 
+LOGWRITE(*,*) "WMLES Connection Information"
+LOGWRITE(*,'(20("=-"))')
+LOGWRITE(*,'(A55, I6)') 'Number of WMLESSides: ', nWMLESSides
+LOGWRITE(*,'(A55, I6)') 'Number of Procs to Send Info: ', nWMLESSendProcs
+LOGWRITE(*,'(A55, I6)') 'Number of Procs to Receive Info: ', nWMLESRecvProcs
+LOGWRITE(*,'(A55, I6)') 'Number of h_wm Sending Points: ', SUM(nHWMSendPoints)
+LOGWRITE(*,'(A55, I6)') 'Number of h_wm Receiving Points: ', SUM(nHWMRecvPoints)
+LOGWRITE(*,'(A55, I6)') 'Number of h_wm Local Points: ', nHWMLocalPoints
+LOGWRITE(*,'(A55, I6)') 'Number of h_wm Interpolation Points: ', nHWMInterpPoints
+LOGWRITE(*,'(20("--"))')
+LOGWRITE(*,'(A30)') 'Local Information/Mapping'
+LOGWRITE(*,'(A10,1X, 2(A2,1X), 3(A10,1X), A5,1X, 3(A10,1X))') "localPoint", "p", "q", "WMLESBCSide", "globalSide", "interpPoint", "iElem", "xi", "eta", "zeta"
+DO i=1,nHWMLocalPoints
+    LOGWRITE(*,'(I10,1X, 2(I2,1X), 3(I10,1X), I5,1X, 3(E10.4,1X))') &
+    i, HWMLocalInfo(1, i), HWMLocalInfo(2, i), HWMLocalInfo(3, i), WMLESToBCSide(HWMLocalInfo(3, i))+offsetBCSides, &
+    LocalToInterpPoint(i), INT(HWMInterpInfo(1, LocalToInterpPoint(i))), HWMInterpInfo(2, LocalToInterpPoint(i)), HWMInterpInfo(3, LocalToInterpPoint(i)), HWMInterpInfo(4, LocalToInterpPoint(i))
+END DO
+LOGWRITE(*,'(20("--"))')
+LOGWRITE(*,'(A30)') 'Sending Information/Mapping'
+LOGWRITE(*,'(2(A5,2X), A10,2X, 2(A2,1X), 2(A10,1X), A5,1X, 3(A10,1X))') "iProc", "nProc", "sendPoint", "p", "q", "globalSide", "interpPoint", "iElem", "xi", "eta", "zeta"
+DO i=1,nWMLESSendProcs
+    DO j=WMLESSendRange(1,i), WMLESSendRange(2,i)
+    LOGWRITE(*,'(2(I5,2X), I10,2X, 2(I2,1X), 2(I10,1X), I5,1X, 3(E10.4,1X))') &
+            i, WMLESSendProc(i), j, INT(HWMSendInfo(nHWMPropSend+1, j)), INT(HWMSendInfo(nHWMPropSend+2, j)), INT(HWMSendInfo(nHWMPropSend+3, j)), &
+            SendToInterpPoint(j), INT(HWMInterpInfo(1, SendToInterpPoint(j))), HWMInterpInfo(2, SendToInterpPoint(j)), HWMInterpInfo(3, SendToInterpPoint(j)), HWMInterpInfo(4, SendToInterpPoint(j))
     END DO
 END DO
-LOGWRITE(*,*) '---------------------------------------'
-LOGWRITE(*,*) "====================== END WMLES Info ===================="
-IF (Logging) FLUSH(UNIT_logOut)
+LOGWRITE(*,'(A30)') 'Receiving Information/Mapping'
+LOGWRITE(*,'(2(A5,2X), A10,2X, 2(A2,1X), A10,1X)') "iProc", "nProc", "sendPoint", "p", "q", "globalSide"
+DO i=1,nWMLESRecvProcs
+    DO j=WMLESRecvRange(1,i), WMLESRecvRange(2,i)
+    LOGWRITE(*,'(2(I5,2X), I10,2X, 2(I2,1X), I10,1X)') &
+            i, WMLESRecvProc(i), j, INT(HWMRecvInfo(nHWMPropSend+1, j)), INT(HWMRecvInfo(nHWMPropSend+2, j)), INT(HWMRecvInfo(nHWMPropSend+3, j))+offsetBCSides
+    END DO
+END DO
+IF (LOGGING) CALL FLUSH(UNIT_logOut)
 
-! Before allowing an MPI proc. to leave this subroutine (and thus possibly clean sending buffers/variables)
-! we make sure that all non-blocking Send operations are completed (i.e. the send buffer may be modified)
-CALL MPI_Waitall(nProcessors,CalcInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
-CALL MPI_Waitall(nProcessors,PointInfoRequests(0:nProcessors-1),MPI_STATUSES_IGNORE,iError)
+SDEALLOCATE(HWMSendInfo_tmp)
+SDEALLOCATE(HWMRecvInfo_tmp)
+SDEALLOCATE(HWMInterpInfo_tmp)
+SDEALLOCATE(nHWMSendPoints_tmp)
+SDEALLOCATE(nHWMRecvPoints_tmp)
+SDEALLOCATE(HWMLocalInfo_tmp)
+SDEALLOCATE(LocalToInterpPoint_tmp)
+SDEALLOCATE(SendToInterpPoint_tmp)
+SDEALLOCATE(WMLESRecvFromProc)
+SDEALLOCATE(WMLESSendToProc)
 
-SDEALLOCATE(TauW_MINE_IsFace)
-SDEALLOCATE(TauW_MINE_IsInterior)
-SDEALLOCATE(TauW_MINE_IsInterpolation)
-SDEALLOCATE(OthersPointInfo)
-SDEALLOCATE(PointInfo)
+ALLOCATE(WMLES_TauW(2, 0:PP_N, 0:PP_NZ, nWMLESSides))
+ALLOCATE(HWMInfo(nHWMPropSend+1, 0:PP_N, 0:PP_NZ, nWMLESSides))
 
-!!!>> IMPORTANT INFO:
-! During the calculation (ComputeWallStress), each proc will run a loop from
-! i = 1,nProcs_SendTauW and within that from j = 1,nTauW_MINE(i) so that it calculates
-! the points for MPI proc. 'i' one by one, and put it in an ordered array of 
-! TauW_MINE(1:2,nTauW_MINE(i),i). Then, communicate this result to the proc. that imposes the BC,
-! i.e., proc. 'i'.
-! Then, proc 'i' receives this info and maps it to the actual WMLES array TauW(1:2,p,q,nWMLESSide)
-! using the info on TauW_Proc array, which contains info on p, q, and WMLES Side, and the MPI proc.
-! responsible for calculating wall stress for this point.
-
+! Just a checkpoint to make sure no MPI proc. leaves the subroutine before any other, so that
+! shared info (buffers) are not erased (well, in this new implementation this is not strictly necessary, but let us keep it.)
+CALL MPI_BARRIER(MPI_COMM_FLEXI, iError)
 
 WMLESInitDone=.TRUE.
 SWRITE(UNIT_stdOut,'(A)')' INIT Wall-Modeled LES DONE!'
@@ -1636,7 +1493,7 @@ END FUNCTION NewtonCouette
 !==================================================================================================================================
 !> Subroutine that controls the receive operations for the Tau_W to be exchanged between processors.
 !==================================================================================================================================
-SUBROUTINE StartReceiveTauWMPI()
+SUBROUTINE StartReceiveHwmMPIData()
 ! MODULES
 USE MOD_Globals
 USE MOD_MPI_Vars
@@ -1654,13 +1511,13 @@ DO iProc=1,nProcs_RecvTauW
                     Proc_RecvTauW(iProc), 0, MPI_COMM_FLEXI, WMLES_RecvRequests(iProc),iError)
 END DO
 
-END SUBROUTINE StartReceiveTauWMPI
+END SUBROUTINE StartReceiveHwmMPIData
 
 
 !==================================================================================================================================
 !> Subroutine that controls the send operations for the Tau_W to be exchanged between processors.
 !==================================================================================================================================
-SUBROUTINE StartSendTauWMPI()
+SUBROUTINE StartSendHwmMPIData()
 ! MODULES
 USE MOD_Globals
 USE MOD_MPI_Vars
@@ -1672,18 +1529,21 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 INTEGER                     :: iProc
+INTEGER                     :: startIdx, endIdx
 !==================================================================================================================================
-DO iProc=1,nProcs_SendTauW
-    CALL MPI_ISEND(TauW_MINE(:,:,iProc),2*nTauW_MINE(iProc), MPI_DOUBLE_PRECISION, &
+DO iProc=1,nWMLESSendProcs
+    startIdx = WMLESSendRange(1, i)
+    endIdx = WMLESSendRange(2, i)
+    CALL MPI_ISEND(HWMSendInfo(:, startIdx:endIdx),(nHWMPropSend+4)*nHWMSendPoints(i), MPI_DOUBLE_PRECISION, &
                     Proc_SendTauW(iProc), 0, MPI_COMM_FLEXI, WMLES_SendRequests(iProc),iError)
 END DO
 
-END SUBROUTINE StartSendTauWMPI
+END SUBROUTINE StartSendHwmMPIData
 
 !==================================================================================================================================
 !> Subroutine that completes the receive operations for the Tau_W to be exchanged between processors.
 !==================================================================================================================================
-SUBROUTINE FinishReceiveTauWMPI()
+SUBROUTINE FinishExchanceHWMData()
 ! MODULES
 USE MOD_Globals
 USE MOD_MPI_Vars
@@ -1709,7 +1569,7 @@ IF (nTauW_MINE(0).NE.0) THEN
     END DO
 END IF
 
-END SUBROUTINE FinishReceiveTauWMPI
+END SUBROUTINE FinishExchanceHWMData
 
 
 #if USE_MPI

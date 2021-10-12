@@ -93,6 +93,21 @@
 #define E2S_SIDE_ID 1
 #define E2S_FLIP    2
 
+! Definitions for the ~interface~ connection
+#define INTERFACE_ELEMSEND 1
+#define INTERFACE_ELEMRECV 2
+#define INTERFACE_XI       3
+#define INTERFACE_ETA      4
+#define INTERFACE_ZETA     5
+#define INTERFACE_TANGVEC1 6:8
+#define INTERFACE_TANGVEC2 9:11
+#define INTERFACE_DIR      12
+#define INTERFACE_P        13
+#define INTERFACE_Q        14
+#define INTERFACE_L        15
+#define N_INTERFACE_PARAMS 15
+
+
 ! Entry position in BC
 #define MI_SIDEID 1
 #define MI_FLIP   2

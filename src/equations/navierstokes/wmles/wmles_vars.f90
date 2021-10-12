@@ -28,15 +28,20 @@ INTEGER, PARAMETER :: WMLES_REICHARDT = 4
 INTEGER, PARAMETER :: WMLES_SPALDING = 5
 INTEGER, PARAMETER :: WMLES_EQTBLE = 6
 INTEGER, PARAMETER :: WMLES_COUETTE = 7
+INTEGER, PARAMETER :: WMLES_LAMINAR_INTEGRAL = 8
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
+CHARACTER(LEN=255)          :: WMConnectionFile ! Name of file containing the WM mapping/connection information
 INTEGER                     :: WallModel        ! Integer corresponding to the WallModel
-REAL                        :: h_wm, abs_h_wm   ! Wall model height, or exchange location, in terms of off-wall height
-REAL                        :: delta            ! Approximate, or characteristic boundary layer thickness
+INTEGER                     :: offsetBCSides    ! offset for BC sides of this proc., related to the global BC side number
+INTEGER                     :: nHWMInterpPoints, nHWMLocalPoints ! Number of points where h_wm should be interpolated,
+                                                ! and number of local h_wm points, i.e., where both h_wm and BC info is in
+                                                ! the same MPI proc.
 REAL                        :: vKarman          ! von Karman constant
 REAL                        :: B                ! Intercept coefficient for log-law-based models
+REAL                        :: abs_h_wm ! just for compilation; this will soon vanish from the code
 INTEGER                     :: NSuper           ! Parameter to find h_wm in standard coordinates, when interpolation is needed.
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
@@ -56,9 +61,41 @@ LOGICAL                     :: WMLESInitDone = .FALSE.
 !----------------------------------------------------------------------------------------------------------------------------------
 ! MPI VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
+INTEGER                     :: nWMLESRecvProcs, nWMLESSendProcs ! Number of sending/receiving procs for each MPI rank (local info)
+INTEGER                     :: nHWMPropSend ! Number of flow properties in h_wm to be sent to the element responsible for WMLES Side
+INTEGER, ALLOCATABLE        :: nHWMSendPoints(:), nHWMRecvPoints(:) ! Arrays containing the number of points to send/receive for each
+                                                                    ! sending/receiving proc.
+INTEGER, ALLOCATABLE        :: SendToInterpPoint(:), LocalToInterpPoint(:) ! Arrays containing the number mapping between the send
+                                                                    ! or the local point to the interpolation point of h_wm, in the local
+                                                                    ! proc.
+INTEGER, ALLOCATABLE        :: WMLESSendProc(:), WMLESRecvProc(:)   ! Mapping between the send/receive list local to proc (i.e., 1:nWMLESSendProcs
+                                                                    ! and 1:nWMLESRecvProc) and the global MPI rank of that proc
+REAL, ALLOCATABLE           :: HWMSendInfo(:,:), HWMRecvInfo(:,:) ! Arrays containing the sending/receiving information. For the first one,
+                                                                  ! info about the flow property is sent, and the second contains the 
+                                                                  ! corresponding BC Side / p,q point at which this received flow property
+                                                                  ! should be use in the modelling procedure
+REAL, ALLOCATABLE           :: HWMInterpInfo(:,:) ! Array containing the informataion for interpolation of flow properties at h_wm
+                                                  ! point, i.e., local element ID and the corresponding standard coordinates
+REAL, ALLOCATABLE        :: HWMLocalInfo(:,:) ! Array containing the information about BC Side / p,q point of the correspongin
+                                                 ! h_wm point that is interpolated locally.
+REAL, ALLOCATABLE           :: HWMInfo(:,:,:,:) ! Array containing the necessary information from h_wm in order to feed the wall model
+INTEGER, ALLOCATABLE        :: WMLESSendRange(:,:), WMLESRecvRange(:,:) ! Interval ranges (first index: left (1)/right (2)) for each
+                                                  ! sending/receiving MPI proc. (local list, i.e. nWMLESSendProcs/nWMLESRecvProcs)
+
+
+
+
+
+
+
+
+
+
+
 INTEGER, ALLOCATABLE        :: nTauW_MINE(:) ! Number of points to calculate tau_w, for each MPI proc. (nProcs_SendTauW)
                                              ! this partition needs to send the results later
 INTEGER, ALLOCATABLE        :: nTauW_YOURS(:) !
+
 
 REAL, ALLOCATABLE           :: TauW_MINE(:,:,:) ! Array to store wall shear stress computed by this MPI proc. that must be sent
                                                 ! to the MPI proc. responsible for BC imposition.
