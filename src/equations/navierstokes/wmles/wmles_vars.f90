@@ -41,7 +41,6 @@ INTEGER                     :: nHWMInterpPoints, nHWMLocalPoints ! Number of poi
                                                 ! the same MPI proc.
 REAL                        :: vKarman          ! von Karman constant
 REAL                        :: B                ! Intercept coefficient for log-law-based models
-REAL                        :: abs_h_wm ! just for compilation; this will soon vanish from the code
 INTEGER                     :: NSuper           ! Parameter to find h_wm in standard coordinates, when interpolation is needed.
 REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
@@ -81,6 +80,7 @@ REAL, ALLOCATABLE        :: HWMLocalInfo(:,:) ! Array containing the information
 REAL, ALLOCATABLE           :: HWMInfo(:,:,:,:) ! Array containing the necessary information from h_wm in order to feed the wall model
 INTEGER, ALLOCATABLE        :: WMLESSendRange(:,:), WMLESRecvRange(:,:) ! Interval ranges (first index: left (1)/right (2)) for each
                                                   ! sending/receiving MPI proc. (local list, i.e. nWMLESSendProcs/nWMLESRecvProcs)
+INTEGER, ALLOCATABLE        :: WMLES_RecvRequests(:), WMLES_SendRequests(:) ! Requests for the non-blocking send/receive operations
 
 
 
@@ -152,7 +152,6 @@ REAL, ALLOCATABLE           :: Lag_xi(:,:,:), Lag_eta(:,:,:), Lag_zeta(:,:,:) ! 
                                                                               ! Second index: Local Tau_W calc point (with respect to each MPI proc. responsible for imposition)
                                                                               ! Third index: MPI proc. to send info
 
-INTEGER, ALLOCATABLE        :: WMLES_RecvRequests(:), WMLES_SendRequests(:) ! Requests for the non-blocking send/receive operations
 
 
 !=================================================================================================================================
