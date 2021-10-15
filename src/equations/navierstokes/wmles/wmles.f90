@@ -729,7 +729,10 @@ SELECT CASE(WallModel)
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag ! Unit tangential vector
 
-
+            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
+            ! Force tangvec to be in the x dir
+            tangvec = (/1.,0.,0./)
+            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
             utang = DOT_PRODUCT(HWMInfo(2:4,p,q,SideID),tangvec)
 
             u_tau = NewtonLogLaw(utang, (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))), HWMInfo(1,p,q,SideID)) ! rho_wall is used here (through UPrim_master). Read TODO above
