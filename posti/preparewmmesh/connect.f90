@@ -205,7 +205,7 @@ USE MOD_Globals
 USE MOD_PreProc
 USE MOD_PrepareWMmesh_Vars
 USE MOD_Mesh_Vars,          ONLY: nBCSides,SideToElem,TangVec1,TangVec2,NormVec,Face_xGP,NGeo,nElems,Elem_xGP,ElemToSide
-USE MOD_Mesh_Vars,          ONLY: BoundaryName,BC
+USE MOD_Mesh_Vars,          ONLY: BoundaryName,BC, SideToGlobalSide
 USE MOD_Stringtools,        ONLY: STRICMP
 USE MOD_TestCase_Vars,      ONLY: testcase
 !----------------------------------------------------------------------------------------------------------------------------------!
@@ -305,6 +305,20 @@ DO iSide = 1,nBCSides
       ELSE
 #endif
         ! Search for the interface in the mesh
+        !WRITE(*,*) "iModelledSide, BC side, Global Side: ", mapBCSideToModelledSide(iSideModelled), iSide, SideToGlobalSide(iSide)
+        IF (InterfaceCoordinates(1).LT.0.) THEN
+          InterfaceCoordinates(1) = 0.
+        ELSEIF ((InterfaceCoordinates(1)-9.).GT.0.) THEN
+          InterfaceCoordinates(1) = 9.
+        ELSEIF (InterfaceCoordinates(2).LT.0.) THEN 
+          InterfaceCoordinates(2) = 0.
+        ELSEIF ((InterfaceCoordinates(2)-3.035).GT.0) THEN
+          InterfaceCoordinates(2) = 3.035
+        ELSEIF (InterfaceCoordinates(3).LT.0.) THEN 
+          InterfaceCoordinates(3) = 0.
+        ELSEIF ((InterfaceCoordinates(3)-4.5).GT.0) THEN
+          InterfaceCoordinates(3) = 4.5
+        END IF
         CALL SearchForParametricCoordinates(XCL_NGeo,NGeo,nElems,DCL_NGeo,Xi_CLNGeo,wBary_CLNGeo,NSuper,Vdm_NGeo_NSuper,&
                 Xi_NSuper,InterfaceCoordinates,ParamCoords,ElemID_send,ElemID)
         ! ID of element that has to send
@@ -625,9 +639,11 @@ CONTAINS
       F=F+NodeCoords(:,i,j,k,iElem)*Lag(1,i)*Lag(2,j)*Lag(3,k)
     END DO; END DO; END DO
   END DO !newton
-
+  ! DEBUGGING
+  !WRITE(*,*) "Left iElem Newton loop in iter, with SUM(F^2) and eps_F: ", iElem, iter, SUM(F*F), eps_F
   ! check if Newton has converged and found a point inside the current element
   IF((SUM(F*F).LT.eps_F).OR.(SUM(F*F).LT.1E-10)) THEN
+  !WRITE(*,*) "Entered first IF, with Xi as: ", Xi
     IF(MAXVAL(ABS(Xi)).LE.1.0000001) THEN
       ! If so, return this point
       ParametricCoords = Xi

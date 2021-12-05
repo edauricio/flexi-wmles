@@ -128,10 +128,10 @@ INTEGER, ALLOCATABLE            :: SendToInterpPoint_tmp(:,:), LocalToInterpPoin
 LOGICAL, ALLOCATABLE            :: WMLESRecvFromProc(:), WMLESSendToProc(:)
 #endif
 !==================================================================================================================================
-IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
- CALL CollectiveStop(__STAMP__,&
-   'Wall-Modeled LES not ready to be called or already called.')
-END IF
+! IF((.NOT.InterpolationInitIsDone).OR.(.NOT.MeshInitIsDone).OR.WMLESInitDone) THEN
+!  CALL CollectiveStop(__STAMP__,&
+!    'Wall-Modeled LES not ready to be called or already called.')
+! END IF
 SWRITE(UNIT_StdOut,'(132("-"))')
 SWRITE(UNIT_stdOut,'(A)') ' INIT Wall-Modeled LES...'
 
@@ -1093,29 +1093,21 @@ IMPLICIT NONE
 SDEALLOCATE(WMLES_Tauw)
 SDEALLOCATE(BCSideToWMLES)
 SDEALLOCATE(WMLESToBCSide)
-SDEALLOCATE(TauW_Proc)
-SDEALLOCATE(Proc_RecvTauW)
-SDEALLOCATE(Proc_RecvTauW_Inv)
-SDEALLOCATE(Proc_SendTauW)
-SDEALLOCATE(nTauW_MINE)
-SDEALLOCATE(nTauW_YOURS)
-SDEALLOCATE(TauW_MINE)
-SDEALLOCATE(TauW_YOURS)
-SDEALLOCATE(TauW_MINE_FacePoint)
-SDEALLOCATE(TauW_MINE_InteriorPoint)
-SDEALLOCATE(TauW_MINE_Interpolate)
-SDEALLOCATE(TauW_MINE_NormVec)
-SDEALLOCATE(nTauW_MINE_FacePoint)
-SDEALLOCATE(nTauW_MINE_InteriorPoint)
-SDEALLOCATE(nTauW_MINE_Interpolate)
-SDEALLOCATE(FaceToLocalPoint)
-SDEALLOCATE(InteriorToLocalPoint)
-SDEALLOCATE(InterpToLocalPoint)
+SDEALLOCATE(nHWMSendPoints)
+SDEALLOCATE(SendToInterpPoint)
+SDEALLOCATE(WMLESSendProc)
+SDEALLOCATE(HWMSendInfo)
+SDEALLOCATE(WMLESSendRange)
+SDEALLOCATE(WMLESRecvProc)
+SDEALLOCATE(nHWMRecvPoints)
+SDEALLOCATE(HWMRecvInfo)
+SDEALLOCATE(WMLESRecvRange)
+SDEALLOCATE(HWMInterpInfo)
+SDEALLOCATE(LocalToInterpPoint)
+SDEALLOCATE(HWMLocalInfo)
+SDEALLOCATE(HWMInfo)
 SDEALLOCATE(WMLES_RecvRequests)
 SDEALLOCATE(WMLES_SendRequests)
-SDEALLOCATE(Lag_xi)
-SDEALLOCATE(Lag_eta)
-SDEALLOCATE(Lag_zeta)
 
 
 END SUBROUTINE FinalizeWMLES
