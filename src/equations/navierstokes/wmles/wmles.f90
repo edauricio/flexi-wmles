@@ -795,10 +795,10 @@ SELECT CASE(WallModel)
     CASE(WMLES_REICHARDT)
         DO WHILE(iter.LT.10) ! Maximum number of iterations. Usually, u_tau is found with 1~4 iters
             iter = iter+1
-            f = NewtonLogLaw*( (1./vKarman)*LOG(1. + vKarman*abs_h_wm*NewtonLogLaw/nu) + (B - (1./vKarman)*LOG(vKarma))*(1. - EXP(-abs_h_wm*NewtonLogLaw/(11.*nu)) - (abs_h_wm*NewtonLogLaw/(11.*nu))*EXP(-abs_h_wm*NewtonLogLaw/(3.*nu)) ) ) - velx
-            fprime = (1./vKarman)*LOG(1. + vKarman*abs_h_wm*NewtonLogLaw/nu) + (B - (1./vKarman)*LOG(vKarma))*(1. - EXP(-abs_h_wm*NewtonLogLaw/(11.*nu)) - (abs_h_wm*NewtonLogLaw/(11.*nu))*EXP(-abs_h_wm*NewtonLogLaw/(3.*nu)) ) &
-                + abs_h_wm*NewtonLogLaw/(nu + vKarman*abs_h_wm*NewtonLogLaw) &
-                + NewtonLogLaw*(B - (1./vKarman)*LOG(vKarma))*((abs_h_wm/(11.*nu))*(EXP(-abs_h_wm*NewtonLogLaw/(11.*nu)) - EXP(-abs_h_wm*NewtonLogLaw/(3.*nu)) + (abs_h_wm*NewtonLogLaw/(11.*nu))*EXP(-abs_h_wm*NewtonLogLaw/(3.*nu)) ) )
+            f = NewtonLogLaw*( (1./vKarman)*LOG(1. + vKarman*hwm*NewtonLogLaw/nu) + (B - (1./vKarman)*LOG(vKarman))*(1. - EXP(-hwm*NewtonLogLaw/(11.*nu)) - (hwm*NewtonLogLaw/(11.*nu))*EXP(-hwm*NewtonLogLaw/(3.*nu)) ) ) - velx
+            fprime = (1./vKarman)*LOG(1. + vKarman*hwm*NewtonLogLaw/nu) + (B - (1./vKarman)*LOG(vKarman))*(1. - EXP(-hwm*NewtonLogLaw/(11.*nu)) - (hwm*NewtonLogLaw/(11.*nu))*EXP(-hwm*NewtonLogLaw/(3.*nu)) ) &
+                + hwm*NewtonLogLaw/(nu + vKarman*hwm*NewtonLogLaw) &
+                + NewtonLogLaw*(B - (1./vKarman)*LOG(vKarman))*((hwm/(11.*nu))*(EXP(-hwm*NewtonLogLaw/(11.*nu)) - EXP(-hwm*NewtonLogLaw/(3.*nu)) + (hwm*NewtonLogLaw/(11.*nu))*EXP(-hwm*NewtonLogLaw/(3.*nu)) ) )
             ! IF(ABS(fprime).LE.1.E-5) EXIT ! fprime ~ 0 -- INCOMING OVERFLOW BY DIVISION
             NewtonLogLaw = NewtonLogLaw - f/fprime            
             IF (ABS(f/fprime).LE.1.E-5) EXIT ! 1.E-5 = stop criterion (tolerance)
