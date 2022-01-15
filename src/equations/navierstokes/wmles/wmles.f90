@@ -541,7 +541,7 @@ SELECT CASE(WallModel)
     !     END DO
     ! END DO
 
-  CASE (WMLES_LOGLAW)
+  CASE (WMLES_LOGLAW,WMLES_REICHARDT)
 
     ! In this case, it is assumed that the log-law is an instantaneous relation
     ! Then, u (projected onto the wall-tangent streamwise direction) is used in the log-law
