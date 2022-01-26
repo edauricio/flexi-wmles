@@ -23,8 +23,16 @@ SAVE
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
 INTEGER :: nAnalyzeTestCase=9999999 !< call AnalyzeTestCase every *th time step. May be adjusted in parameter file
-LOGICAL :: doTCSource=.FALSE.       !< compute source terms for testcase
+LOGICAL :: doTCSource=.TRUE.       !< compute source terms for testcase
 CHARACTER(LEN=255) :: testcase = "default"  !< name of testcase
+REAL    :: dpdx, bulkVel
+REAL    :: U_Parameter = 0.01444
+REAL    :: P_Parameter = 7.35
+REAL,ALLOCATABLE   :: writeBuf(:,:) !< buffer to store log testcase data
+INTEGER :: ioCounter   =0           !< current number of buffer items
+INTEGER :: nWriteStats =-999        !< Write testcase statistics to file at every n-th AnalyzeTestcase step
+CHARACTER(LEN=255) :: Filename      !< filename to store testcase log data
+
 !==================================================================================================================================
 
 END MODULE MOD_TestCase_Vars
