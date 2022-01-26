@@ -12,24 +12,24 @@
 ! You should have received a copy of the GNU General Public License along with FLEXI. If not, see <http://www.gnu.org/licenses/>.
 !=================================================================================================================================
 #include "flexi.h"
+#include "eos.h"
 
 !==================================================================================================================================
 !> Subroutines defining one specific testcase with all necessary variables
 !==================================================================================================================================
 MODULE MOD_Testcase
 ! MODULES
-USE MOD_Testcase_Vars
 IMPLICIT NONE
 PRIVATE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
 
 INTERFACE DefineParametersTestcase
-  MODULE PROCEDURE DefineParametersTestcase
+  MODULE PROCEDURE DO_NOTHING
 End INTERFACE
 
 INTERFACE InitTestcase
-  MODULE PROCEDURE InitTestcase
+  MODULE PROCEDURE DO_NOTHING
 END INTERFACE
 
 INTERFACE FinalizeTestcase
@@ -41,15 +41,15 @@ INTERFACE ExactFuncTestcase
 END INTERFACE
 
 INTERFACE CalcForcing
-  MODULE PROCEDURE CalcForcing
+  MODULE PROCEDURE DO_NOTHING
 END INTERFACE
 
-INTERFACE TestcaseSource
- MODULE PROCEDURE TestcaseSource
-END INTERFACE
+!INTERFACE TestcaseSource
+!  MODULE PROCEDURE TestcaseSource
+!END INTERFACE
 
 INTERFACE AnalyzeTestCase
-  MODULE PROCEDURE AnalyzeTestCase
+  MODULE PROCEDURE DO_NOTHING
 END INTERFACE
 
 INTERFACE GetBoundaryFluxTestcase
@@ -84,22 +84,19 @@ SUBROUTINE DefineParametersTestcase()
 ! MODULES
 USE MOD_Globals
 USE MOD_ReadInTools ,ONLY: prms
-!==================================================================================================================================
+!!==================================================================================================================================
 CALL prms%SetSection("Testcase")
 CALL prms%CreateIntOption('nWriteStats', "Write testcase statistics to file at every n-th AnalyzeTestcase step.", '100')
 CALL prms%CreateIntOption('nAnalyzeTestCase', "Call testcase specific analysis routines every n-th timestep. "//&
-                                             "(Note: always called at global analyze level)", '9999')
+                                              "(Note: always called at global analyze level)", '10')
 END SUBROUTINE DefineParametersTestcase
 
 
-!==================================================================================================================================
-!> Specifies all the initial conditions. The state in conservative variables is returned.
-!==================================================================================================================================
+!!==================================================================================================================================
+!!> Specifies all the initial conditions. The state in conservative variables is returned.
+!!==================================================================================================================================
 SUBROUTINE InitTestcase()
 ! MODULES
-USE MOD_ReadInTools,        ONLY: GETINT,GETREAL
-USE MOD_Output_Vars,        ONLY: ProjectName
-USE MOD_Output,             ONLY: InitOutputToFile
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT/OUTPUT VARIABLES
@@ -107,19 +104,7 @@ IMPLICIT NONE
 ! OUTPUT VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-CHARACTER(LEN=7)         :: varnames(2)
 !==================================================================================================================================
-dpdx=-1.0
-
-nWriteStats  = GETINT('nWriteStats','100')
-nAnalyzeTestCase = GETINT( 'nAnalyzeTestCase','1000')
-
-ALLOCATE(writeBuf(3,nWriteStats))
-Filename = TRIM(ProjectName)//'_Stats'
-varnames(1) = 'dpdx'
-varnames(2) = 'bulkVel'
-CALL InitOutputToFile(Filename,'Statistics',2,varnames)
-
 END SUBROUTINE InitTestcase
 
 
@@ -129,9 +114,6 @@ END SUBROUTINE InitTestcase
 SUBROUTINE ExactFuncTestcase(tIn,x,Resu,Resu_t,Resu_tt)
 ! MODULES
 USE MOD_Globals,      ONLY: Abort
-USE MOD_Eos_Vars,     ONLY: R
-USE MOD_EOS,          ONLY: PrimToCons
-USE MOD_Equation_Vars, ONLY: RefStatePrim, IniRefState
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT/OUTPUT VARIABLES
@@ -142,130 +124,57 @@ REAL,INTENT(OUT)                :: Resu_t(5)   !< first time deriv of exact fuct
 REAL,INTENT(OUT)                :: Resu_tt(5)  !< second time deriv of exact fuction
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-REAL                            :: pexit, pentry, RT, sRT, h
-REAL                            :: Prim(PP_nVarPrim)
 !==================================================================================================================================
-!CALL abort(__STAMP__,'Exactfunction not specified!')
-Resu=0.
-Resu_t =0.
-Resu_tt=0.
-
-! RT=1. ! Hesthaven: Absorbing layers for weakly compressible flows
-! sRT=1/RT
-! ! size of domain must be [-0.5, 0.5]^2 -> (x*y)
-! h=0.5
-! prim(2)= U_parameter*(0.5*(1.+x(2)/h) + P_parameter*(1-(x(2)/h)**2))
-! prim(3:4)= 0.
-! pexit=0.9999985
-! pentry=1.0000015
-! prim(5)= ( ( x(1) - (-0.5) )*( pexit - pentry) / ( 0.5 - (-0.5)) ) + pentry
-! prim(1)=prim(5)*sRT
-! prim(6)=prim(5)/(prim(1)*R)
-prim(1:5) = refstateprim(1:5,IniRefState)
-CALL PrimToCons(prim,Resu)
+CALL abort(__STAMP__,'Exactfunction not specified!')
+Resu=-1.
+Resu_t =-1.
+Resu_tt=-1.
 END SUBROUTINE ExactFuncTestcase
 
 
-!==================================================================================================================================
-!> Compute forcing term for testcase
-!==================================================================================================================================
-SUBROUTINE CalcForcing(t,dt)
-! MODULES
-USE MOD_PreProc
-USE MOD_Globals
-USE MOD_DG_Vars,        ONLY: U
-USE MOD_Mesh_Vars,      ONLY: sJ
-USE MOD_Analyze_Vars,   ONLY: wGPVol,Vol
-USE MOD_Mesh_Vars,      ONLY: nElems
-#if USE_MPI
-USE MOD_MPI_Vars
-#endif
-IMPLICIT NONE
-!----------------------------------------------------------------------------------------------------------------------------------
-! INPUT/OUTPUT VARIABLES
-REAL,INTENT(IN)                 :: t,dt
-!----------------------------------------------------------------------------------------------------------------------------------
-! LOCAL VARIABLES
-INTEGER                         :: i,j,k,iElem
-!==================================================================================================================================
-BulkVel =0.
-DO iElem=1,nElems
-  DO k=0,PP_NZ; DO j=0,PP_N; DO i=0,PP_N
-    BulkVel = BulkVel+U(2,i,j,k,iElem)/U(1,i,j,k,iElem)*wGPVol(i,j,k)/sJ(i,j,k,iElem,0)
-  END DO; END DO; END DO
-END DO
-
-#if USE_MPI
-CALL MPI_ALLREDUCE(MPI_IN_PLACE,BulkVel,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_FLEXI,iError)
-#endif
-BulkVel = BulkVel/Vol
-END SUBROUTINE CalcForcing
+!!==================================================================================================================================
+!!> Compute forcing term for testcase
+!!==================================================================================================================================
+!SUBROUTINE CalcForcing()
+!! MODULES
+!IMPLICIT NONE
+!!----------------------------------------------------------------------------------------------------------------------------------
+!! INPUT/OUTPUT VARIABLES
+!!----------------------------------------------------------------------------------------------------------------------------------
+!! OUTPUT VARIABLES
+!!----------------------------------------------------------------------------------------------------------------------------------
+!! LOCAL VARIABLES
+!!==================================================================================================================================
+!END SUBROUTINE CalcForcing
 
 !==================================================================================================================================
 !> Add testcases source term to solution time derivative
 !==================================================================================================================================
 SUBROUTINE TestcaseSource(Ut)
 ! MODULES
-USE MOD_PreProc
-USE MOD_Globals
-USE MOD_Mesh_Vars, ONLY:sJ,nElems
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT/OUTPUT VARIABLES
-REAL,INTENT(INOUT)              :: Ut(PP_nVar,0:PP_N,0:PP_N,0:PP_NZ,1:nElems) !< solution time derivative
+REAL,DIMENSION(*),INTENT(IN) :: Ut                        !< solution time derivative
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-INTEGER                         :: i,j,k,iElem
 !==================================================================================================================================
-! Apply forcing with the pressure gradient
-DO iElem=1,nElems
-  DO k=0,PP_NZ; DO j=0,PP_N; DO i=0,PP_N
-    Ut(2,i,j,k,iElem)=Ut(2,i,j,k,iElem) -dpdx/sJ(i,j,k,iElem,0)
-    !Ut(5,i,j,k,iElem)=Ut(5,i,j,k,iElem) -dpdx*BulkVel/sJ(i,j,k,iElem,0)
-  END DO; END DO; END DO
-END DO
 END SUBROUTINE TestcaseSource
 
-!==================================================================================================================================
-!> Testcase specific analyze routines
-!==================================================================================================================================
-SUBROUTINE AnalyzeTestcase(Time)
-! MODULES
-USE MOD_Globals
-IMPLICIT NONE
-!----------------------------------------------------------------------------------------------------------------------------------
-! INPUT/OUTPUT VARIABLES
-REAL,INTENT(IN)                 :: Time                   !< simulation time
-!----------------------------------------------------------------------------------------------------------------------------------
-! LOCAL VARIABLES
-!==================================================================================================================================
-IF(MPIRoot)THEN
-  ioCounter=ioCounter+1
-  writeBuf(:,ioCounter) = (/Time, dpdx, BulkVel/)
-  IF(ioCounter.GE.nWriteStats) CALL WriteStats()
-END IF
-END SUBROUTINE AnalyzeTestcase
-
-!==================================================================================================================================
-!> Output testcase statistics
-!==================================================================================================================================
-SUBROUTINE WriteStats()
-! MODULES
-USE MOD_PreProc
-USE MOD_Globals
-USE MOD_Output,       ONLY:OutputToFile
-USE MOD_TestCase_Vars,ONLY:FileName
-IMPLICIT NONE
-!----------------------------------------------------------------------------------------------------------------------------------
-! INPUT/OUTPUT VARIABLES
-!----------------------------------------------------------------------------------------------------------------------------------
-! LOCAL VARIABLES
-INTEGER                  :: ioUnit,openStat,i
-!==================================================================================================================================
-CALL OutputToFile(FileName,writeBuf(1,1:ioCounter),(/2,ioCounter/),RESHAPE(writeBuf(2:3,1:ioCounter),(/2*ioCounter/)))
-ioCounter=0
-
-END SUBROUTINE WriteStats
+!!==================================================================================================================================
+!!> Testcase specific analyze routines
+!!==================================================================================================================================
+!SUBROUTINE AnalyzeTestcase()
+!! MODULES
+!IMPLICIT NONE
+!!----------------------------------------------------------------------------------------------------------------------------------
+!! INPUT/OUTPUT VARIABLES
+!!----------------------------------------------------------------------------------------------------------------------------------
+!! OUTPUT VARIABLES
+!!----------------------------------------------------------------------------------------------------------------------------------
+!! LOCAL VARIABLES
+!!==================================================================================================================================
+!END SUBROUTINE AnalyzeTestcase
 
 !!==================================================================================================================================
 !!> Specifies all the initial conditions. The state in conservative variables is returned.
@@ -302,18 +211,17 @@ SUBROUTINE GetBoundaryFluxTestcase(SideID,t,Nloc,Flux,UPrim_master,             
 INTEGER,INTENT(IN)   :: SideID  !< ID of current side
 REAL,INTENT(IN)      :: t       !< current time (provided by time integration scheme)
 INTEGER,INTENT(IN)   :: Nloc    !< polynomial degree
-REAL,INTENT(IN)      :: UPrim_master( PP_nVarPrim,0:Nloc,0:Nloc) !< inner surface solution
+REAL,INTENT(IN)      :: UPrim_master( PP_nVarPrim,0:Nloc,0:ZDIM(Nloc))    !< inner surface solution
 #if PARABOLIC
-                                                           !> inner surface solution gradients in x/y/z-direction
-REAL,INTENT(IN)      :: gradUx_master(PP_nVarPrim,0:Nloc,0:Nloc)
-REAL,INTENT(IN)      :: gradUy_master(PP_nVarPrim,0:Nloc,0:Nloc)
-REAL,INTENT(IN)      :: gradUz_master(PP_nVarPrim,0:Nloc,0:Nloc)
+REAL,INTENT(IN)      :: gradUx_master(PP_nVar,0:Nloc,0:ZDIM(Nloc)) !> inner surface solution gradients in x-direction
+REAL,INTENT(IN)      :: gradUy_master(PP_nVar,0:Nloc,0:ZDIM(Nloc)) !> inner surface solution gradients in y-direction
+REAL,INTENT(IN)      :: gradUz_master(PP_nVar,0:Nloc,0:ZDIM(Nloc)) !> inner surface solution gradients in z-direction
 #endif /*PARABOLIC*/
-REAL,INTENT(IN)      :: NormVec (3,0:Nloc,0:Nloc)    !< normal vectors on surfaces
-REAL,INTENT(IN)      :: TangVec1(3,0:Nloc,0:Nloc)    !< tangential1 vectors on surfaces
-REAL,INTENT(IN)      :: TangVec2(3,0:Nloc,0:Nloc)    !< tangential2 vectors on surfaces
-REAL,INTENT(IN)      :: Face_xGP(3,0:Nloc,0:Nloc)    !< positions of surface flux points
-REAL,INTENT(OUT)     :: Flux(PP_nVar,0:Nloc,0:Nloc)  !< resulting boundary fluxes
+REAL,INTENT(IN)      :: NormVec (  3,0:Nloc,0:ZDIM(Nloc))  !< normal vectors on surfaces
+REAL,INTENT(IN)      :: TangVec1(  3,0:Nloc,0:ZDIM(Nloc))  !< tangential1 vectors on surfaces
+REAL,INTENT(IN)      :: TangVec2(  3,0:Nloc,0:ZDIM(Nloc))  !< tangential2 vectors on surfaces
+REAL,INTENT(IN)      :: Face_xGP(  3,0:Nloc,0:ZDIM(Nloc))  !< positions of surface flux points
+REAL,INTENT(OUT)     :: Flux(PP_nVar,0:Nloc,0:ZDIM(Nloc))  !< resulting boundary fluxes
 !==================================================================================================================================
 END SUBROUTINE GetBoundaryFluxTestcase
 
@@ -322,10 +230,10 @@ SUBROUTINE GetBoundaryFVgradientTestcase(SideID,t,gradU,UPrim_master)
 USE MOD_PreProc
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT / OUTPUT VARIABLES
-INTEGER,INTENT(IN) :: SideID                                  !< ID of current side
-REAL,INTENT(IN)    :: t                                       !< current time (provided by time integration scheme)
-REAL,INTENT(IN)    :: UPrim_master(PP_nVarPrim,0:PP_N,0:PP_N) !< primitive solution from the inside
-REAL,INTENT(OUT)   :: gradU       (PP_nVarPrim,0:PP_N,0:PP_N) !< FV boundary gradient
+INTEGER,INTENT(IN) :: SideID                                   !< ID of current side
+REAL,INTENT(IN)    :: t                                        !< current time (provided by time integration scheme)
+REAL,INTENT(IN)    :: UPrim_master(PP_nVarPrim,0:PP_N,0:PP_NZ) !< primitive solution from the inside
+REAL,INTENT(OUT)   :: gradU       (PP_nVarPrim,0:PP_N,0:PP_NZ) !< FV boundary gradient
 !==================================================================================================================================
 END SUBROUTINE GetBoundaryFVgradientTestcase
 
@@ -334,10 +242,10 @@ SUBROUTINE Lifting_GetBoundaryFluxTestcase(SideID,t,UPrim_master,Flux)
 USE MOD_PreProc
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT / OUTPUT VARIABLES
-INTEGER,INTENT(IN) :: SideID                                  !< ID of current side
-REAL,INTENT(IN)    :: t                                       !< current time (provided by time integration scheme)
-REAL,INTENT(IN)    :: UPrim_master(PP_nVarPrim,0:PP_N,0:PP_N) !< primitive solution from the inside
-REAL,INTENT(OUT)   :: Flux(        PP_nVarPrim,0:PP_N,0:PP_N) !< lifting boundary flux
+INTEGER,INTENT(IN) :: SideID                                   !< ID of current side
+REAL,INTENT(IN)    :: t                                        !< current time (provided by time integration scheme)
+REAL,INTENT(IN)    :: UPrim_master(PP_nVarPrim,0:PP_N,0:PP_NZ) !< primitive solution from the inside
+REAL,INTENT(OUT)   :: Flux(     PP_nVar,0:PP_N,0:PP_NZ) !< lifting boundary flux
 !==================================================================================================================================
 END SUBROUTINE Lifting_GetBoundaryFluxTestcase
 
