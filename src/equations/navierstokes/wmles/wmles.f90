@@ -708,7 +708,7 @@ CALL FinishExchangeHWMData()
 
 SELECT CASE(WallModel)
 
-  CASE (WMLES_LOGLAW)
+  CASE (WMLES_LOGLAW,WMLES_REICHARDT)
 
     LOGWRITE(*,'(30("=-"))')
     LOGWRITE(*,'(A60)') 'WMLES_TauW Calculation Logging/Debug Information'
