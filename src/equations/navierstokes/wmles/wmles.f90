@@ -874,6 +874,8 @@ END FUNCTION InterpolateHwm
 FUNCTION NewtonLogLaw(velx,nu,abs_h_wm)
 ! MODULES
 USE MOD_WMLES_Vars
+USE MOD_Testcase_Vars       ,ONLY: dpdx
+USE MOD_TimeDisc_Vars       ,ONLY: t
 USE MOD_Globals
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
@@ -890,15 +892,23 @@ REAL                        :: f,fprime
 
 NewtonLogLaw = 1.0 ! Initial guess, usually not so bad for u_tau
 iter = 0
+LOGWRITE(*,'(30("=-"))')
+LOGWRITE(*,'(A60)') 'NewtonLogLaw Logging/Debug Information'
+LOGWRITE(*,'(30("=-"))')
+LOGWRITE(*,'(A15,2X,E15.8)') 'Sim. time: ', t
+LOGWRITE(*,'(A15,2X,E15.8)') 'dpdx: ', dpdx
+LOGWRITE(*,'(3(A15,2X))') 'u_tau', 'f', 'fprime'
 
 SELECT CASE(WallModel)
+
     CASE(WMLES_LOGLAW)
         DO WHILE(iter.LT.10) ! Maximum number of iterations. Usually, u_tau is found with 1~4 iters
             iter = iter+1
             f = NewtonLogLaw*( (1./vKarman)*LOG(abs_h_wm*NewtonLogLaw/nu) + B ) - velx
             fprime = (1./vKarman) * (LOG(abs_h_wm*NewtonLogLaw/nu) + 1.) + B
             ! IF(ABS(fprime).LE.1.E-5) EXIT ! fprime ~ 0 -- INCOMING OVERFLOW BY DIVISION
-            NewtonLogLaw = NewtonLogLaw - f/fprime            
+            NewtonLogLaw = NewtonLogLaw - f/fprime
+            LOGWRITE(*,'(3(E15.8,2X))') NewtonLogLaw, f, fprime
             IF (ABS(f/fprime).LE.1.E-5) EXIT ! 1.E-5 = stop criterion (tolerance)
         END DO
 
@@ -915,6 +925,13 @@ SELECT CASE(WallModel)
         END DO
 
 END SELECT
+
+IF (iter.EQ.10) THEN 
+    LOGWRITE(*,*) "NEWTON METHOD FAILED TO CONVERGE!"
+END IF
+
+LOGWRITE(*,'(15("-"),A30,15("-"))') 'END OF NewtonLogLaw LOGGING'
+IF (Logging) FLUSH(UNIT_logOut)
 
 
 END FUNCTION NewtonLogLaw
