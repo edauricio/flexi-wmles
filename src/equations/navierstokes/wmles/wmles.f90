@@ -721,7 +721,7 @@ SELECT CASE(WallModel)
             ! wall-normal direction) from the velocity. The result is the velocity aligned with the
             ! tangential direction
             tangvec = HWMInfo(2:4,p,q,SideID) - DOT_PRODUCT(HWMInfo(2:4,p,q,SideID),NormVec(1:3,p,q,0,WMLESToBCSide(SideID)))*NormVec(1:3,p,q,0,WMLESToBCSide(SideID))
-
+            
             VelMag = 0.
                 DO i=1,3
                     VelMag = VelMag + tangvec(i)**2
@@ -731,7 +731,7 @@ SELECT CASE(WallModel)
 
             !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
             ! Force tangvec to be in the x dir
-            tangvec = (/1.,0.,0./)
+            ! tangvec = (/1.,0.,0./)
             !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
             utang = DOT_PRODUCT(HWMInfo(2:4,p,q,SideID),tangvec)
 
@@ -741,15 +741,36 @@ SELECT CASE(WallModel)
 
             !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
             ! Create vector aligned with wall-normal velocity with tau_xy
-            tau_w_vec = (/0.,tau_w_mag,0./)
-            ! Project it onto the normal direction so that the correct signal is imposed
-            WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),NormVec(1:3,p,q,0,WMLESToBCSide(SideID)))
+            ! tau_w_vec = (/0.,tau_w_mag,0./)
+            ! Project it onto the normal direction so that the correct sign is imposed
+            ! tauxy = DOT_PRODUCT(tau_w_vec(:),TangVec2(:,p,q,FV_ENABLED,SideID))
             !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
-            WMLES_TauW(2,p,q,SideID) = 0.
+
+            ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
+            SELECT CASE(SideToElem(S2E_LOC_SIDE_ID, WMLESToBCSide(SideID)))
+                CASE (ZETA_PLUS) ! Bottom wall
+                    WMLES_TauW(1,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+                    WMLES_TauW(2,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                CASE (XI_PLUS,ETA_MINUS) ! Bottom wall
+                    WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                    WMLES_TauW(2,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+                CASE (ZETA_MINUS) ! Top wall
+                    WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+                    WMLES_TauW(2,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                CASE (XI_MINUS,ETA_PLUS) ! Top wall
+                    WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                    WMLES_TauW(2,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+            END SELECT
+            ! WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),NormVec(1:3,p,q,0,WMLESToBCSide(SideID)))
+            ! WMLES_TauW(2,p,q,SideID) = 0.
 
             LOGWRITE(*,'(2(I9,1X), I7,1X, 2(I2,1X), 3(E10.4,1X), 3(E10.4,1X), 2(E10.4,1X))') &
                     WMLESToBCSide(SideID)+offsetBCSides, SideID, WMLESToBCSide(SideID), p, q, HWMInfo(2,p,q,SideID), HWMInfo(3,p,q,SideID), HWMInfo(4,p,q,SideID), &
                     utang, HWMInfo(1,p,q,SideID), u_tau, WMLES_TauW(1,p,q,SideID), WMLES_TauW(2,p,q,SideID)
+            LOGWRITE(*,*) 'loc, NormVec', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), NormVec(:,p, q, FV_ENABLED, SideID)
+            LOGWRITE(*,*) 'loc, TangVec1', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), TangVec1(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
+            LOGWRITE(*,*) 'loc, TangVec2', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), TangVec2(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
+            LOGWRITE(*,*) 'loc, Face_xGP', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), Face_xGP(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
         END DO; END DO ! p,q
     END DO ! iSide
 
