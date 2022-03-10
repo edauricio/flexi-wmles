@@ -30,28 +30,35 @@ LOGICAL             :: CartesianMode                     !< In cartesian mode, t
                                                          !< the wall-normal line.
 LOGICAL             :: UseGaussPoints                    !< Use a gauss point as the interface location (except the first or last GL
                                                          !< point)
-INTEGER             :: interfaceShape                    !< Shape of the interface
+INTEGER             :: boundaryRegime                    !< Boundary layer regime (parameters below)
 INTEGER             :: NSuper                            !< Polynomial degree for supersampling
+
+INTEGER,PARAMETER   :: BLREGIME_LAMINAR = 1              !< Full Laminar BL
+INTEGER,PARAMETER   :: BLREGIME_TRANSITION = 2           !< External BL: laminar near leading edge, transition to turbulent
+INTEGER,PARAMETER   :: BLREGIME_TURBULENT = 3            !< Full Turbulent BL
 
 INTEGER,PARAMETER   :: INTERFACESHAPE_CONSTANT    = 1    !< Interface in constant wall distance
 INTEGER,PARAMETER   :: INTERFACESHAPE_LINEARX     = 2    !< Interface with linear variation in x
 INTEGER,PARAMETER   :: INTERFACESHAPE_NACA64418   = 3    !< Interface for the NACA64418 interface
+INTEGER,PARAMETER   :: INTERFACESHAPE_BLASIUS = 4        !< Interface considering Blasius laminar BL
 
 ! Parameters of interface shapes
+REAL,ALLOCATABLE    :: interfaceShapeInfo(:,:)         !< Stores inferface shape info
+                                                       !< (INFO,1:nShape), where INFO refers to shape, h_wm distance, xStart ,etc
+                                                       !< Depending on INTERFACESHAPE, some of INFO might be dummy variables/numbers
+REAL                :: xTransition                     !< Location of transition point for Transition BL Regime
 ! INTERFACESHAPE_CONSTANT 
 REAL                :: interfaceDistance                 !< Constant distance of the interface away from the wall
-! INTERFACESHAPE_LINEARX 
-REAL                :: xStart                            !< First x position of linear function
-REAL                :: xEnd                              !< Last x position of linear function
-REAL                :: distanceStart                     !< Interface distance at first x position of linear function
-REAL                :: distanceEnd                       !< Interface distance at last x position of linear function
-
 
 ! Connection information
 REAL,ALLOCATABLE    :: wallconnect(:,:,:,:)              !< Stores the actual connection information
                                                          !< (INFO,0:PP_N+1,0:PP_N+1,1:nModelledBCSides)
 INTEGER,ALLOCATABLE :: mapBCSideToModelledSide(:)        !< Takes side index and return index of modelled BC side
 INTEGER             :: nModelledBCSides                  !< Number of modelled BC sides
+INTEGER,ALLOCATABLE :: sideShapeInfo(:,:)                !< For each modelled side, contains info about the boundary
+                                                         !< layer regime for this side, and whether it is a boundary
+                                                         !< of the shape or not (needed for laminar BL model)
+                                                         !< (2, nModelledBCSides): 1: Interface shape number; 2: Is Shape Boundary?
 
 ! Data needed for point search in mesh
 REAL,ALLOCATABLE    :: XCL_Ngeo(:,:,:,:,:)               !< Mesh coordinates on GL points (Ngeo), later needed to find
@@ -64,7 +71,7 @@ REAL,ALLOCATABLE    :: Vdm_NGeo_NSuper(:,:)              !< Vandermonde matrix f
 REAL,ALLOCATABLE    :: Xi_N(:)                           !< Reference coordinates on calculation mesh
 
 ! Variable names of wallconnect array
-CHARACTER(LEN=255),DIMENSION(15),PARAMETER  :: StrVarNamesWallconnect = (/ CHARACTER(LEN=255) :: &
+CHARACTER(LEN=255),DIMENSION(17),PARAMETER  :: StrVarNamesWallconnect = (/ CHARACTER(LEN=255) :: &
                                                        'ElemSend',&
                                                        'ElemRcv',&
                                                        'XI',&
@@ -79,7 +86,9 @@ CHARACTER(LEN=255),DIMENSION(15),PARAMETER  :: StrVarNamesWallconnect = (/ CHARA
                                                        'dir',&
                                                        'p',&
                                                        'q',&
-                                                       'l'/)
+                                                       'l',&
+                                                       'BLRegime',&
+                                                       'ShapeBoundary'/)
 
 END MODULE MOD_PrepareWMmesh_Vars
 

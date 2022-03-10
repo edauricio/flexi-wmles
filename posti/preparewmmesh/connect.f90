@@ -3,7 +3,7 @@
 ! This file is part of FLEXI, a high-order accurate framework for numerically solving PDEs with discontinuous Galerkin methods.
 ! For more information see https://www.flexi-project.org and https://nrg.iag.uni-stuttgart.de/
 !
-! FLEXI is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License
+! FLEXI software: you can redistribute it and/or modify it under the terms of the GNU General Public License
 ! as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 !
 ! FLEXI is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
@@ -60,7 +60,7 @@ USE MOD_Globals
 USE MOD_PreProc
 USE MOD_PrepareWMmesh_Vars
 USE MOD_ReadInTools
-USE MOD_Mesh_Vars,            ONLY: nBCSides,BoundaryType,BC,NGeo,useCurveds,MeshFile,nElems,offsetElem
+USE MOD_Mesh_Vars,            ONLY: nBCSides,nInnerSides,AnalyzeSide,BoundaryType,BC,NGeo,Face_xGP,SideToElem,ElemToSide,useCurveds,MeshFile,nElems,offsetElem,SideToGlobalSide,BoundaryName
 USE MOD_Interpolation_Vars,   ONLY: NodeTypeCL,NodeTypeVISU,NodeType
 USE MOD_Interpolation,        ONLY: GetVandermonde,GetDerivativeMatrix,GetNodesAndWeights
 USE MOD_IO_HDF5,              ONLY: OpenDataFile,CloseDataFile
@@ -74,45 +74,97 @@ IMPLICIT NONE
 ! Space-separated list of input and output types. Use: (int|real|logical|...)_(in|out|inout)_dim(n)
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-INTEGER           :: iSide,locType,iElem
+INTEGER           :: iSide,locType,iElem,nShapes,iShape,iBCSide,i,j,p,q,interfaceShape
+INTEGER           :: locSideID, neighboringElemID, interfaceSideID,iModelledSide
 REAL,ALLOCATABLE  :: NodeCoordsTmp(:,:,:,:,:),NodeCoords(:,:,:,:,:)
 REAL,ALLOCATABLE  :: Vdm_EQNGeo_CLNGeo(:,:)
+REAL              :: xMax, xMin, nb_xMax, nb_xMin
+INTEGER,ALLOCATABLE :: mapModelledSideToBCSide(:)
+LOGICAL           :: sameShape, foundBoundary
 !===================================================================================================================================
 
 SWRITE(UNIT_StdOut,'(132("-"))')
 SWRITE(UNIT_stdOut,'(A)') ' INIT PREPARE WM MESH TOOL...'
+sameShape = .FALSE.
 
 ! Get user defined parameters
 doVisu         = GETLOGICAL("doVisu")
-interfaceShape = GETINTFROMSTR("interfaceShape")
+boundaryRegime = GETINTFROMSTR("boundaryLayerRegime")
 CartesianMode  = GETLOGICAL("cartesianMode")
 IF (cartesianMode) UseGaussPoints  = GETLOGICAL("UseGaussPoints")
-
 NSuper         = GETINT("NSuper")
 
-SELECT CASE(interfaceShape)
-CASE(INTERFACESHAPE_CONSTANT)
-  interfaceDistance = GETREAL("interfaceDistance")
-CASE(INTERFACESHAPE_LINEARX)
-  xStart        = GETREAL("xStart")               ! First x position of linear function
-  xEnd          = GETREAL("xEnd")                 ! Last x position of linear function
-  distanceStart = GETREAL("distanceStart")        ! Interface distance at first x position of linear function
-  distanceEnd   = GETREAL("distanceEnd")          ! Interface distance at last x position of linear function
-CASE(INTERFACESHAPE_NACA64418)
-  ! Nothing to init here
-CASE DEFAULT
-  CALL Abort(__STAMP__,"Selected interface shape not implemented!")
-END SELECT
+nShapes = CountOption("interfaceShape")
+IF (nShapes .EQ. 0) CALL Abort(__STAMP__, 'No interface shape defined!')
+IF (nShapes .GT. 2) THEN
+  SWRITE(UNIT_stdOut,*) 'More than two interface shapes defined. Extra interfaces will be ignored'
+  nShapes=2
+END IF
+
+IF (boundaryRegime .EQ. BLREGIME_TRANSITION) THEN
+  xTransition = GETREAL("xTransitionPoint")
+  IF (nShapes .EQ. 1) THEN 
+    SWRITE(UNIT_stdOut, '(A)') 'WARNING: Transition Regime for Boundary Layer is chosen, but only ' // &
+                        'one interface defined! Same interface will be assumed for both laminar and ' // &
+                        'turbulent regions!'
+    sameShape = .TRUE.
+  END IF
+  nShapes=2
+ELSE
+  nShapes=1 ! ignore possible extra interfaces
+END IF
+ALLOCATE(interfaceShapeInfo(5,nShapes)) 
+
+DO iShape=1,nShapes
+  interfaceShape = GETINTFROMSTR("interfaceShape")
+  interfaceShapeInfo(5,iShape) = interfaceShape
+  SELECT CASE(interfaceShape)
+  CASE(INTERFACESHAPE_CONSTANT)
+    interfaceShapeInfo(1,iShape) = GETREAL("interfaceDistance")
+  CASE(INTERFACESHAPE_LINEARX)
+    interfaceShapeInfo(1,iShape) = GETREAL("distanceStart") ! Interface distance at first x position of linear function
+    interfaceShapeInfo(2,iShape) = GETREAL("xStart") ! First x position of linear function
+    interfaceShapeInfo(3,iShape) = GETREAL("xEnd") ! Last x position of linear function
+    interfaceShapeInfo(4,iShape) = GETREAL("distanceEnd") ! Interface distance at last x position of linear function
+  CASE(INTERFACESHAPE_BLASIUS)
+    interfaceShapeInfo(1,iShape) = GETREAL("distanceStart") ! Interface distance at first x position of blasius function
+    interfaceShapeInfo(2,iShape) = GETREAL("xStart") ! First x position of blasius function
+    interfaceShapeInfo(3,iShape) = GETREAL("xEnd") ! Last x position of blasius function
+  CASE(INTERFACESHAPE_NACA64418)
+    ! Nothing to init here
+  CASE DEFAULT
+    CALL Abort(__STAMP__,"Selected interface shape not implemented!")
+  END SELECT
+  IF (sameShape) THEN
+    interfaceShapeInfo(:,2) = interfaceShapeInfo(:,1)
+    EXIT
+  END IF
+END DO
+
+! Force consistency between start/end of interface shapes when in a transitional boundary layer
+IF (boundaryRegime .EQ. BLREGIME_TRANSITION) THEN
+  interfaceShapeInfo(3,1) = xTransition
+  interfaceShapeInfo(2,2) = xTransition
+  ! End of turbulent shape, when defined as linear or blasius, is always referenced from the transition point, just as the start
+  IF ((interfaceShapeInfo(5,2).EQ.INTERFACESHAPE_LINEARX) .OR. (interfaceShapeInfo(5,2).EQ.INTERFACESHAPE_BLASIUS)) THEN
+      interfaceShapeInfo(3,2) = xTransition+interfaceShapeInfo(3,2)
+    END IF
+END IF
+
 
 ! Build mapping from all BC sides to modelled BC sides
+! Also, for each modelled BC side, get the interface shape definition of the side
 ALLOCATE(mapBCSideToModelledSide(nBCSides))
+ALLOCATE(mapModelledSideToBCSide(nBCSides))
 mapBCSideToModelledSide = 0
+mapModelledSideToBCSide = 0
 nModelledBCSides = 0
 DO iSide=1,nBCSides
   locType =BoundaryType(BC(iSide),BC_TYPE)
   IF (locType.EQ.5) THEN
     nModelledBCSides = nModelledBCSides + 1
     mapBCSideToModelledSide(iSide) = nModelledBCSides
+    mapModelledSideToBCSide(nModelledBCSides) = iSide
   END IF
 END DO
 
@@ -120,7 +172,75 @@ SWRITE(*,*) 'Number of wall modelled sides: ',nModelledBCSides
 
 ! Allocate the array that is used to store the wallconnection information
 ALLOCATE(wallconnect(15,0:PP_N,0:PP_N,nModelledBCSides))
+ALLOCATE(sideShapeInfo(2,nModelledBCSides))
 wallconnect = 0.
+sideShapeInfo = 0
+
+DO iSide=1,nModelledBCSides
+  iBCSide = mapModelledSideToBCSide(iSide)
+  IF (nShapes.GT.1) THEN ! Transitional boundary layer
+    CALL Get_SideMinMax(xMax, xMin, iBCSide)
+    ! Given the maximum and minimum x coordinate, find out which interface shape this
+    ! side should conform to (laminar or turbulent)
+    IF (xMax .LT. interfaceShapeInfo(3,1)) THEN
+      sideShapeInfo(INTERFACE_SHAPE, iSide) = 1
+    ELSE IF (xMin .GT. interfaceShapeInfo(3,1)) THEN
+      sideShapeInfo(INTERFACE_SHAPE, iSide) = 2
+    ELSE IF ((xMax .GE. interfaceShapeInfo(3,1)) .AND. (xMin .LE. interfaceShapeInfo(3,1))) THEN
+      ! Side is across the laminar-turbulent transition.
+      ! Set the side to the shape corresponding to that with a higher proportion of the side in
+      sideShapeInfo(INTERFACE_SHAPE, iSide) = 2 - NINT(((interfaceShapeInfo(3,1) - xMin)/(xMax-xMin)))
+      ! In addition to that, this side contains the point interfacing the two shapes, so we signal it
+      sideShapeInfo(SHAPE_BOUNDARY, iSide) = 1
+    END IF
+  ELSE
+      sideShapeInfo(INTERFACE_SHAPE, iSide) = 1
+  END IF
+END DO
+
+
+
+!< The loop above only mark sides as containing point boundaries for those sides
+!< that actually range across this boundary
+!< In the next loop we find all sides which contain shape boundary points,
+!< either interfacing another shape (for transitional BL) or the end of the shape
+DO iSide=1,nModelledBCSides
+  IF (sideShapeInfo(SHAPE_BOUNDARY, iSide).EQ.1) CYCLE ! Side already correctly marked
+  iElem = SideToElem(S2E_ELEM_ID, mapModelledSideToBCSide(iSide))
+  DO i=-1,1,2
+    CALL Get_XNeighborElem(iElem, neighboringElemID, direction=i)
+    IF (neighboringElemID.EQ.-1 .OR.neighboringElemID.EQ.-10) THEN
+      ! This element either has no neighbor or is an element in a periodic boundary
+      ! Thus, it is a boundary element and hence this side is also a shape boundary in the i direction
+      sideShapeInfo(SHAPE_BOUNDARY, iSide) = 1
+      CYCLE
+    END IF
+    ! Check if the neighboring element has a modelled BC side
+    iModelledSide = 0
+    DO j=1,6      
+      iBCSide = ElemToSide(E2S_SIDE_ID, j, neighboringElemID)
+      IF (iBCSide.GT.nBCSides) CYCLE
+
+      iModelledSide = mapBCSideToModelledSide(iBCSide)
+      IF (iModelledSide.NE.0) THEN
+        IF (sideShapeInfo(INTERFACE_SHAPE, iModelledSide).NE.sideShapeInfo(INTERFACE_SHAPE, iSide)) THEN
+          ! This side is a shape boundary in the i direction
+          sideShapeInfo(SHAPE_BOUNDARY, iSide) = 1
+          sideShapeInfo(SHAPE_BOUNDARY, iModelledSide) = 1
+          EXIT
+        END IF
+
+        IF (BoundaryName(BC(iBCSide)).NE.BoundaryName(BC(mapModelledSideToBCSide(iSide)))) THEN
+          ! Different "physical surfaces" (gmsh-like) are considered shape interfaces
+          ! This is done in order to correctly set the boundary points for airfoils
+          sideShapeInfo(SHAPE_BOUNDARY, iSide) = 1
+          sideShapeInfo(SHAPE_BOUNDARY, iModelledSide) = 1
+          EXIT
+        END IF
+      END IF      
+    END DO
+  END DO  
+END DO
 
 !==================== Prepare data for point search ========================!
 
@@ -216,7 +336,7 @@ LOGICAL,INTENT(IN) :: cartesian
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 INTEGER           :: iSide,iSideModelled,ElemID,p,q,ElemID_send,i,refDirection,SideID,ElemID2
-INTEGER           :: nextLocSide
+INTEGER           :: nextLocSide,interfaceShape,iShape
 REAL              :: InterfaceCoordinates(3),wm_l
 REAL              :: ParamCoords(3)
 REAL              :: biggestScalProd,scalProd(3),xi_vec(3),eta_vec(3),zeta_vec(3)
@@ -245,13 +365,16 @@ DO iSide = 1,nBCSides
       ! Both tangential vectors
       wallconnect(INTERFACE_TANGVEC1,p,q,iSideModelled) = TangVec1(:,p,q,0,iSide)
       wallconnect(INTERFACE_TANGVEC2,p,q,iSideModelled) = TangVec2(:,p,q,0,iSide)
+      ! Shape corresponding to this side
+      iShape = sideShapeInfo(INTERFACE_SHAPE, iSideModelled)
+      interfaceShape = interfaceShapeInfo(5,iShape)
       ! Distance to the interface
       SELECT CASE(interfaceShape)
       CASE(INTERFACESHAPE_CONSTANT)
-        wm_l = interfaceDistance
+        wm_l = interfaceShapeInfo(1,iShape)
       CASE(INTERFACESHAPE_LINEARX)
         x = Face_xGP(1,p,q,0,iSide)
-        wm_l = distanceStart + (x-xStart)/(xEnd-xStart)*(distanceEnd-distanceStart)
+        wm_l = interfaceShapeInfo(1,iShape) + (x-interfaceShapeInfo(2,iShape))/(interfaceShapeInfo(3,iShape)-interfaceShapeInfo(2,iShape))*(interfaceShapeInfo(4,iShape)-interfaceShapeInfo(1,iShape))
       CASE(INTERFACESHAPE_NACA64418)
         x = Face_xGP(1,p,q,0,iSide)
         ! Check if we are on the lower or upper wall by comparing the BC name
@@ -271,6 +394,7 @@ DO iSide = 1,nBCSides
       wallconnect(INTERFACE_L,p,q,iSideModelled) = wm_l
       ! Coordinates of the interface = coordinate of boundary points plus distance in wall-normal direction (NormVec is outwards)
       InterfaceCoordinates = Face_xGP(:,p,q,0,iSide) - wm_l*NormVec(:,p,q,0,iSide)
+      
 
 #if (PP_NodeType==2)
       ! For the channel testcase with GL points, to avoid a "jump" of the interface on the double-valued cell borders, we
@@ -306,19 +430,27 @@ DO iSide = 1,nBCSides
 #endif
         ! Search for the interface in the mesh
         !WRITE(*,*) "iModelledSide, BC side, Global Side: ", mapBCSideToModelledSide(iSideModelled), iSide, SideToGlobalSide(iSide)
-        IF (InterfaceCoordinates(1).LT.0.) THEN
+        ! ----- CODE FOR PHILL ONLY
+        ! IF (InterfaceCoordinates(1).LT.0.) THEN
+        !   InterfaceCoordinates(1) = 0.
+        ! ELSEIF ((InterfaceCoordinates(1)-9.).GT.0.) THEN
+        !   InterfaceCoordinates(1) = 9.
+        ! ELSEIF (InterfaceCoordinates(2).LT.0.) THEN 
+        !   InterfaceCoordinates(2) = 0.
+        ! ELSEIF ((InterfaceCoordinates(2)-3.035).GT.0) THEN
+        !   InterfaceCoordinates(2) = 3.035
+        ! ELSEIF (InterfaceCoordinates(3).LT.0.) THEN  
+        !   InterfaceCoordinates(3) = 0.
+        ! ELSEIF ((InterfaceCoordinates(3)-4.5).GT.0) THEN
+        !   InterfaceCoordinates(3) = 4.5
+        ! END IF
+        ! ------ END OF CODE FOR PHILL ONLY
+
+        ! ------ CODE FOR NOZZLE ONLY
+        IF (InterfaceCoordinates(1).GT. 0.) THEN
           InterfaceCoordinates(1) = 0.
-        ELSEIF ((InterfaceCoordinates(1)-9.).GT.0.) THEN
-          InterfaceCoordinates(1) = 9.
-        ELSEIF (InterfaceCoordinates(2).LT.0.) THEN 
-          InterfaceCoordinates(2) = 0.
-        ELSEIF ((InterfaceCoordinates(2)-3.035).GT.0) THEN
-          InterfaceCoordinates(2) = 3.035
-        ELSEIF (InterfaceCoordinates(3).LT.0.) THEN 
-          InterfaceCoordinates(3) = 0.
-        ELSEIF ((InterfaceCoordinates(3)-4.5).GT.0) THEN
-          InterfaceCoordinates(3) = 4.5
         END IF
+        ! ------ END OF CODE FOR NOZZLE ONLY
         CALL SearchForParametricCoordinates(XCL_NGeo,NGeo,nElems,DCL_NGeo,Xi_CLNGeo,wBary_CLNGeo,NSuper,Vdm_NGeo_NSuper,&
                 Xi_NSuper,InterfaceCoordinates,ParamCoords,ElemID_send,ElemID)
         ! ID of element that has to send
@@ -480,6 +612,161 @@ END DO ! iSideModelled = 1,nModelledBCSides
 SWRITE(UNIT_stdOut,'(A)')' DONE!'
 
 END SUBROUTINE ProjectToGaussPoints
+
+!=================================================================================================================================
+!> Finds iElem's neighbor element in direction i, with respect to a modeled boundary
+!> (i.e. BoundaryType .EQ. 5)
+!=================================================================================================================================
+SUBROUTINE Get_XNeighborElem(iElem, nbElem, direction)
+! MODULES
+USE MOD_Globals
+USE MOD_PrepareWMmesh_Vars
+USE MOD_Mesh_Vars,            ONLY: SideToElem,ElemToSide,nBCSides,AnalyzeSide,nBCs,BoundaryType
+! IMPLICIT VARIABLE HANDLING
+IMPLICIT NONE
+!---------------------------------------------------------------------------------------------------------------------------------
+! INPUT VARIABLES
+INTEGER, INTENT(IN)         :: iElem                  !< Current element ID
+INTEGER, INTENT(IN)         :: direction              !< Direction on which we look for the neighboring element
+!---------------------------------------------------------------------------------------------------------------------------------
+! OUTPUT VARIABLES
+INTEGER, INTENT(OUT)        :: nbElem                 !< ID of the neighboring element
+!---------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER                     :: locSideID,iLocSide,sideID,iModelledSide,i
+INTEGER                     :: PeriodicBCIndex(0:nBCs)
+LOGICAL                     :: foundModelled
+!=================================================================================================================================
+! Find the modelled element within iElem
+foundModelled = .FALSE.
+DO iLocSide=1,6
+  locSideID = ElemToSide(E2S_SIDE_ID, iLocSide, iElem)
+  IF (locSideID.GT.nBCSides) CYCLE
+  IF (mapBCSideToModelledSide(locSideID).NE.0) THEN
+    foundModelled = .TRUE. ! Found the modelled side
+    EXIT 
+  END IF
+END DO
+! Sanity check
+IF (.NOT.foundModelled) &
+  CALL Abort(__STAMP__, "The element iElem in subroutine Get_XNeighborElem has no modelled side!")
+
+! Loop through boundary definitions and check if there is any periodic boundary to be aware of
+PeriodicBCIndex=0
+DO i=1,nBCs
+  IF (BoundaryType(i,BC_TYPE).EQ.1) PeriodicBCIndex(i) = 1
+END DO
+
+IF (direction.EQ.1) THEN
+  SELECT CASE(iLocSide)
+    CASE (ETA_MINUS,ETA_PLUS)
+      sideID = ElemToSide(E2S_SIDE_ID, XI_PLUS, iElem)
+      IF (SideToElem(S2E_NB_ELEM_ID,sideID).EQ.iElem) THEN ! slave side
+        nbElem = SideToElem(S2E_ELEM_ID,sideID)
+      ELSE
+        nbElem = SideToElem(S2E_NB_ELEM_ID,sideID)
+      END IF
+      IF (PeriodicBCIndex(AnalyzeSide(sideID)).EQ.1) nbElem = -10 ! periodic side
+
+    CASE (ZETA_MINUS,ZETA_PLUS)
+      sideID = ElemToSide(E2S_SIDE_ID, XI_PLUS, iElem)
+      IF (SideToElem(S2E_NB_ELEM_ID,sideID).EQ.iElem) THEN ! slave side
+        nbElem = SideToElem(S2E_ELEM_ID,sideID)
+      ELSE
+        nbElem = SideToElem(S2E_NB_ELEM_ID,sideID)
+      END IF
+      IF (PeriodicBCIndex(AnalyzeSide(sideID)).EQ.1) nbElem = -10 ! periodic side
+
+    CASE (XI_PLUS,XI_MINUS)
+      sideID = ElemToSide(E2S_SIDE_ID, ZETA_MINUS, iElem)
+      IF (SideToElem(S2E_NB_ELEM_ID,sideID).EQ.iElem) THEN ! slave side
+        nbElem = SideToElem(S2E_ELEM_ID,sideID)
+      ELSE
+        nbElem = SideToElem(S2E_NB_ELEM_ID,sideID)
+      END IF
+      IF (PeriodicBCIndex(AnalyzeSide(sideID)).EQ.1) nbElem = -10 ! periodic side
+
+  END SELECT
+ELSE IF (direction.EQ.-1) THEN
+  SELECT CASE(iLocSide)
+    CASE (ETA_MINUS,ETA_PLUS)
+      sideID = ElemToSide(E2S_SIDE_ID, XI_MINUS, iElem)
+      IF (SideToElem(S2E_NB_ELEM_ID,sideID).EQ.iElem) THEN ! slave side
+        nbElem = SideToElem(S2E_ELEM_ID,sideID)
+      ELSE
+        nbElem = SideToElem(S2E_NB_ELEM_ID,sideID)
+      END IF
+      IF (PeriodicBCIndex(AnalyzeSide(sideID)).EQ.1) nbElem = -10 ! periodic side
+
+    CASE (ZETA_MINUS,ZETA_PLUS)
+      sideID = ElemToSide(E2S_SIDE_ID, XI_MINUS, iElem)
+      IF (SideToElem(S2E_NB_ELEM_ID,sideID).EQ.iElem) THEN ! slave side
+        nbElem = SideToElem(S2E_ELEM_ID,sideID)
+      ELSE
+        nbElem = SideToElem(S2E_NB_ELEM_ID,sideID)
+      END IF
+      IF (PeriodicBCIndex(AnalyzeSide(sideID)).EQ.1) nbElem = -10 ! periodic side
+
+    CASE (XI_MINUS,XI_PLUS)
+      sideID = ElemToSide(E2S_SIDE_ID, ZETA_PLUS, iElem)
+      IF (SideToElem(S2E_NB_ELEM_ID,sideID).EQ.iElem) THEN ! slave side
+        nbElem = SideToElem(S2E_ELEM_ID,sideID)
+      ELSE
+        nbElem = SideToElem(S2E_NB_ELEM_ID,sideID)
+      END IF
+      IF (PeriodicBCIndex(AnalyzeSide(sideID)).EQ.1) nbElem = -10 ! periodic side
+
+  END SELECT
+ELSE
+  CALL Abort(__STAMP__, "Error in specified direction in subroutine Get_XNeighborElem, ", IntInfo=direction)
+END IF
+
+END SUBROUTINE Get_XNeighborElem
+
+
+!=================================================================================================================================
+!> Finds iElem's neighbor element in direction i, with respect to a modeled boundary
+!> (i.e. BoundaryType .EQ. 5)
+!=================================================================================================================================
+SUBROUTINE Get_SideMinMax(max, min, sideID)
+! MODULES
+USE MOD_Globals
+USE MOD_PrepareWMmesh_Vars
+USE MOD_PreProc
+USE MOD_Mesh_Vars,            ONLY: Face_xGP !, TangDirs, NormalDirs, SideToElem, TangVec1, NormalSigns, TangVec2
+! IMPLICIT VARIABLE HANDLING
+IMPLICIT NONE
+!---------------------------------------------------------------------------------------------------------------------------------
+! INPUT VARIABLES
+INTEGER, INTENT(IN)        :: sideID                 !< ID of the side
+!---------------------------------------------------------------------------------------------------------------------------------
+! OUTPUT VARIABLES
+REAL, INTENT(OUT)         :: max              !< maximum x-coordinate of this side
+REAL, INTENT(OUT)         :: min              !< minimum x-coordinate of this side
+!---------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER                     :: p,q
+INTEGER                     :: iLocSide
+!=================================================================================================================================
+max = Face_xGP(1,0,0,0,sideID)
+min = Face_xGP(1,0,0,0,sideID)
+! Little Debug
+! iLocSide = SideToElem(S2E_LOC_SIDE_ID, SideID)
+! SELECT CASE (TangDirs(iLocSide))
+!   CASE (1)
+!     WRITE(*,*) "loc, dir, TangVec1, TangVec2, normalDir, normalSig, Face_xGP1, Face_xGP2", iLocSide, 1, TangVec1(:,0,0,0,sideID), TangVec2(:,0,0,0,sideID), NormalDirs(iLocSide), NormalSigns(iLocSide), Face_xGP(1,0,0,0,SideID), Face_xGP(1,1,0,0,SideID), Face_xGP(1,0,1,0,SideID), "\n"
+!   CASE (2)
+!     WRITE(*,*) "loc, dir, TangVec1, TangVec2, normalDir, normalSig, Face_xGP1, Face_xGP2", iLocSide, 2, TangVec1(:,0,0,0,sideID), TangVec2(:,0,0,0,sideID), NormalDirs(iLocSide), NormalSigns(iLocSide), Face_xGP(2,0,0,0,SideID), Face_xGP(2,1,0,0,SideID), Face_xGP(2,0,1,0,SideID), "\n"
+!   CASE (3)
+!     WRITE(*,*) "loc, dir, TangVec1, TangVec2, normalDir, normalSig, Face_xGP1, Face_xGP2", iLocSide, 3, TangVec1(:,0,0,0,sideID), TangVec2(:,0,0,0,sideID), NormalDirs(iLocSide), NormalSigns(iLocSide), Face_xGP(3,0,0,0,SideID), Face_xGP(3,1,0,0,SideID), Face_xGP(3,0,1,0,SideID), "\n"
+! END SELECT
+! End Debug
+DO p=0,PP_N; DO q=0,PP_N
+  IF ((Face_xGP(1,p,q,0,sideID) - max) .GT. 0.) max = Face_xGP(1,p,q,0,sideID)
+  IF ((min - Face_xGP(1,p,q,0,sideID)) .GT. 0.) min = Face_xGP(1,p,q,0,sideID)
+END DO; END DO ! p,q
+
+END SUBROUTINE Get_SideMinMax
 
 !=================================================================================================================================
 !> This routine takes a mesh (coordinates in CL nodes) and the physical coordinates of a single point and searches for the

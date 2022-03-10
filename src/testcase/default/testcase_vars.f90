@@ -23,6 +23,7 @@ SAVE
 ! GLOBAL VARIABLES
 !----------------------------------------------------------------------------------------------------------------------------------
 INTEGER :: nAnalyzeTestCase=9999999 !< call AnalyzeTestCase every *th time step. May be adjusted in parameter file
+REAL    :: dpdx = 0.
 LOGICAL :: doTCSource=.FALSE.       !< compute source terms for testcase
 CHARACTER(LEN=255) :: testcase = "default"  !< name of testcase
 !==================================================================================================================================

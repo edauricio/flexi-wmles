@@ -28,7 +28,10 @@ INTEGER, PARAMETER :: WMLES_REICHARDT = 4
 INTEGER, PARAMETER :: WMLES_SPALDING = 5
 INTEGER, PARAMETER :: WMLES_EQTBLE = 6
 INTEGER, PARAMETER :: WMLES_COUETTE = 7
-INTEGER, PARAMETER :: WMLES_LAMINAR_INTEGRAL = 8
+INTEGER, PARAMETER :: WMLES_FALKNER_SKAN = 8
+INTEGER, PARAMETER :: WMLES_LAMINAR_INTEGRAL = 9
+
+REAL, PARAMETER    :: PI = 3.141592653589
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
@@ -36,7 +39,7 @@ INTEGER, PARAMETER :: WMLES_LAMINAR_INTEGRAL = 8
 CHARACTER(LEN=255)          :: WMConnectionFile ! Name of file containing the WM mapping/connection information
 INTEGER                     :: WallModel        ! Integer corresponding to the WallModel
 INTEGER                     :: offsetBCSides    ! offset for BC sides of this proc., related to the global BC side number
-INTEGER                     :: nHWMInterpPoints, nHWMLocalPoints ! Number of points where h_wm should be interpolated,
+INTEGER                     :: nHWMInterpPoints, nHWMLocalPoints ! NuPmber of points where h_wm should be interpolated,
                                                 ! and number of local h_wm points, i.e., where both h_wm and BC info is in
                                                 ! the same MPI proc.
 REAL                        :: vKarman          ! von Karman constant
@@ -55,6 +58,13 @@ INTEGER,ALLOCATABLE         :: WMLESToBCSide(:) ! Inverse of BCSideToWMLES mappi
                                                 ! get SideID of BC from WMLESSideID
 
 LOGICAL                     :: WMLESInitDone = .FALSE.
+
+! Variables for the solution of the Falkner-Skan equation
+REAL                        :: beta_0, beta            ! Parameters defining the actual equation to be solved
+REAL                        :: eta_inf, alpha          ! Final solutions
+REAL, ALLOCATABLE           :: xi_16(:)                ! Vector of time points when solving the RHS16 system
+REAL, ALLOCATABLE           :: sol_16(:,:)             ! Vector of time points when solving the RHS16 system
+REAL                        :: fs_f, fs_u, fs_v        ! Solution variables of the first ODE system solved, used subsequently in the other two systems
 
 #if USE_MPI
 !----------------------------------------------------------------------------------------------------------------------------------

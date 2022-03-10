@@ -65,6 +65,7 @@ INTEGER                   :: iExt
 INTEGER(HID_T)            :: DSet_ID,FileSpace,HDF5DataType
 INTEGER(HSIZE_T)          :: Dimsf(4)
 INTEGER(HSIZE_T)          :: Dimsf_2(1)
+INTEGER(HSIZE_T)          :: Dimsf_3(2)
 !===================================================================================================================================
 
 SWRITE(UNIT_stdOut,'(A)') ' Writing connection information to HDF5 file...'
@@ -118,6 +119,24 @@ CALL H5SCLOSE_F(FileSpace, iError)
 
 CALL CloseDataFile()
 
+! Shape Boundary Info
+
+! Create file
+CALL OpenDataFile(TRIM(FileName),create=.FALSE.,single=.TRUE.,readOnly=.FALSE.)
+
+! Preallocate the data space for the dataset.
+Dimsf_3=(/2,nModelledBCSides/)
+
+CALL H5SCREATE_SIMPLE_F(2, Dimsf_3, FileSpace, iError)
+! Create the dataset with default properties.
+HDF5DataType=H5T_NATIVE_INTEGER
+CALL H5DCREATE_F(File_ID,'sideShapeInfo', HDF5DataType, FileSpace, DSet_ID, iError)
+! Close the filespace and the dataset
+CALL H5DCLOSE_F(Dset_id, iError)
+CALL H5SCLOSE_F(FileSpace, iError)
+
+CALL CloseDataFile()
+
 !============================ Actual data output ===========================!
 
 CALL GatheredWriteArray(FileName,create=.FALSE.,&
@@ -134,6 +153,13 @@ CALL GatheredWriteArray(FileName,create=.FALSE.,&
                         nVal=      (/nBCSides/),&
                         offset=    (/       0/),&
                         collective=.TRUE.,IntArray=mapBCSideToModelledSide)
+
+CALL GatheredWriteArray(FileName,create=.FALSE.,&
+                        DataSetName='sideShapeInfo',rank=2,&
+                        nValGlobal=(/2,nModelledBCSides/),&
+                        nVal=      (/2,nModelledBCSides/),&
+                        offset=    (/0,               0/),&
+                        collective=.TRUE.,IntArray=sideShapeInfo)
 SWRITE(UNIT_stdOut,'(A)')' DONE!'
 
 
@@ -164,7 +190,7 @@ CHARACTER(LEN=255)   :: FileName
 INTEGER              :: pq(2)
 !===================================================================================================================================
 ! Initialize the wallconnect array with zeros
-ALLOCATE(Wallconnect_Volume(15,0:PP_N,0:PP_N,0:PP_N,nElems))
+ALLOCATE(Wallconnect_Volume(17,0:PP_N,0:PP_N,0:PP_N,nElems))
 Wallconnect_Volume = 0.
 
 ! Loop over all BC sides
@@ -183,6 +209,8 @@ DO iBC=1,nBCSides
         DO i=1,15
           Wallconnect_Volume(i,:,pq(1),pq(2),ElemID) = wallconnect(i,p,q,iModelledSide)
         END DO ! i=1,15
+        Wallconnect_Volume(16,:,pq(1),pq(2),ElemID) = sideShapeInfo(INTERFACE_SHAPE, iModelledSide)
+        Wallconnect_Volume(17,:,pq(1),pq(2),ElemID) = sideShapeInfo(SHAPE_BOUNDARY, iModelledSide)
       END DO; END DO ! p,q=0,PP_N
     CASE(ETA_MINUS,ETA_PLUS)
       DO q=0,PP_N; DO p=0,PP_N
@@ -191,6 +219,8 @@ DO iBC=1,nBCSides
         DO i=1,15
           Wallconnect_Volume(i,pq(1),:,pq(2),ElemID) = wallconnect(i,p,q,iModelledSide)
         END DO ! i=1,15
+        Wallconnect_Volume(16,pq(1),:,pq(2),ElemID) = sideShapeInfo(INTERFACE_SHAPE, iModelledSide)
+        Wallconnect_Volume(17,pq(1),:,pq(2),ElemID) = sideShapeInfo(SHAPE_BOUNDARY, iModelledSide)
       END DO; END DO ! p,q=0,PP_N
     CASE(ZETA_MINUS,ZETA_PLUS)
       DO q=0,PP_N; DO p=0,PP_N
@@ -199,6 +229,8 @@ DO iBC=1,nBCSides
         DO i=1,15
           Wallconnect_Volume(i,pq(1),:,pq(2),ElemID) = wallconnect(i,p,q,iModelledSide)
         END DO ! i=1,15
+        Wallconnect_Volume(16,pq(1),:,pq(2),ElemID) = sideShapeInfo(INTERFACE_SHAPE, iModelledSide)
+        Wallconnect_Volume(17,pq(1),:,pq(2),ElemID) = sideShapeInfo(SHAPE_BOUNDARY, iModelledSide)
       END DO; END DO ! p,q=0,PP_N
     END SELECT
   END IF
@@ -211,7 +243,7 @@ FileName = TRIM(FileName) // '_WM.vtu'
 
 ! Write the wallconnect information to vtu
 Coord_p => Elem_xGP
-CALL WriteDataToVTK(15,PP_N,nElems,StrVarNamesWallconnect,Coord_p,Wallconnect_Volume,TRIM(FileName),dim=3)
+CALL WriteDataToVTK(17,PP_N,nElems,StrVarNamesWallconnect,Coord_p,Wallconnect_Volume,TRIM(FileName),dim=3)
 DEALLOCATE(Wallconnect_Volume)
 
 END SUBROUTINE ConnectVisu

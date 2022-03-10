@@ -30,7 +30,7 @@ IMPLICIT NONE
 PRIVATE
 
 PUBLIC :: DefineParametersWMLES, InitWMLES, FinalizeWMLES
-PUBLIC :: ComputeWallStress, EvalDiffFlux3D_WMLES
+PUBLIC :: ComputeWallStress, EvalDiffFlux3D_WMLES, FalknerSkan
 !==================================================================================================================================
 
 CONTAINS
@@ -55,6 +55,7 @@ CALL addStrListEntry('WallModel', 'Reichardt', WMLES_REICHARDT)
 CALL addStrListEntry('WallModel', 'Spalding', WMLES_SPALDING)
 CALL addStrListEntry('WallModel', 'EquilibriumTBLE', WMLES_EQTBLE)
 CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
+CALL addStrListEntry('WallModel', 'FalknerSkan', WMLES_FALKNER_SKAN)
 
 CALL prms%CreateRealOption('vKarman', "von Karman constant for the log-law model", "0.41")
 CALL prms%CreateRealOption('B', "intercept coefficient for the log-law model", "5.2")
@@ -88,7 +89,7 @@ IMPLICIT NONE
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
 REAL                            :: WMLES_Tol, RealTmp
-INTEGER                         :: SideID, iSide, iGlobalSide, LocSide, MineCnt, nSideIDs, offsetSideID
+INTEGER                         :: SideID, iSide, GlobalWMLESSide, LocSide, MineCnt, nSideIDs, offsetSideID, iGlobalBCSide
 INTEGER                         :: Loc_hwmElemID, Glob_hwmElemID, OppSideID
 REAL                            :: hwmElem_NodeCoords(3,0:NGeo,0:NGeo,0:NGeo), OppSideNodeCoords(3,4)
 INTEGER                         :: TotalNWMLESSides, GlobalOppSideID, InnerOppSideID
@@ -162,7 +163,7 @@ B = GETREAL('B')
 ! We now set up the necessary information for the wall-stress computation and 
 ! message communication between the relevant processors for the procedure.
 ! In other words, we do the following:
-! (0) Bear in mind that all info in the WM connection file is in terms of GLOBAL elements and BC side numbers)
+! (0) Bear in mind that all info in the WM connection file is in terms of GLOBAL elements and BC side numbers
 ! 1) Get the total number of BC sides (global), so that each MPI proc. may scan the whole array in the HDF5 file
 ! 2) Check wheter a Modelled Side is within this proc. (using the mapping in the HDF5 file)
 ! 3) For all modeled sides within this proc, we store wall-tangent vector info, as well as the
@@ -297,19 +298,23 @@ nWMLESRecvProcs = 0
 nWMLESSendProcs = 0
 
 
-DO iGlobalSide=1, nWMLESSides_global
-    IF ((iGlobalSide.GT.offsetBCSides) .AND. (iGlobalSide.LE.(offsetBCSides+nBCSides))) THEN ! Local BC side!
-        ! Sanity check
-        IF (BCSideToWMLES(iGlobalSide-offsetBCSides) .EQ. 0) CALL Abort(__STAMP__, &
-            'Modeled local BC found in WM Connection file, but it has not been marked as a WMLES Side using the current config./mesh!')
+DO iGlobalBCSide=1, nBCSides_global
+    GlobalWMLESSide = BCSideToWMLES_global(iGlobalBCSide)
+    IF (GlobalWMLESSide.EQ.0) CYCLE ! Not a modelled side
+    IF (GlobalWMLESSide.GT.nWMLESSides_global) CALL Abort(__STAMP__, "Something's wrong with the global WMLES Side number information.")
 
-        iWMLESSide = BCSideToWMLES(iGlobalSide-offsetBCSides)
+    IF ((iGlobalBCSide.GT.offsetBCSides) .AND. (iGlobalBCSide.LE.(offsetBCSides+nBCSides))) THEN ! Local BC side!
+        ! Sanity check
+        IF (BCSideToWMLES(iGlobalBCSide-offsetBCSides) .EQ. 0) CALL Abort(__STAMP__, &
+            'Modeled local BC found in WM Connection file, but it has not been marked as a WMLES Side using the current config/mesh!')
+
+        iWMLESSide = BCSideToWMLES(iGlobalBCSide-offsetBCSides)
 
         ! We now check if we need to receive h_wm point info from another proc., or if h_wm is within a local element
         ! This check is done for each GL point within this BC side
         DO p=0,PP_N; DO q=0,PP_N
 
-            iElem = INT(WMConnection(INTERFACE_ELEMSEND,p,q,iGlobalSide)) ! Global ElemID
+            iElem = INT(WMConnection(INTERFACE_ELEMSEND,p,q,GlobalWMLESSide)) ! Global ElemID
             IF ((iElem.GT.offsetElem) .AND. (iElem.LE.(offsetElem+nElems))) THEN
                 ! Element where h_wm lies is local to this proc
                 ! Hence, no communication will be needed. 
@@ -322,11 +327,11 @@ DO iGlobalSide=1, nWMLESSides_global
 
                 LocalToInterpPoint_tmp(nHWMLocalPoints) = nHWMInterpPoints
 
-                HWMLocalInfo_tmp(1:4, nHWMLocalPoints) = (/WMConnection(INTERFACE_L,p,q,iGlobalSide), REAL(p), REAL(q), REAL(iWMLESSide)/)
+                HWMLocalInfo_tmp(1:4, nHWMLocalPoints) = (/WMConnection(INTERFACE_L,p,q,GlobalWMLESSide), REAL(p), REAL(q), REAL(iWMLESSide)/)
                 HWMInterpInfo_tmp(:,nHWMInterpPoints) = (/REAL(iElem-offsetElem), & ! All elements in the array construction must be of the same type.
-                                                        WMConnection(INTERFACE_XI, p, q, iGlobalSide), &
-                                                        WMConnection(INTERFACE_ETA,p, q, iGlobalSide), &
-                                                        WMConnection(INTERFACE_ZETA,p,q, iGlobalSide)/)
+                                                        WMConnection(INTERFACE_XI, p, q, GlobalWMLESSide), &
+                                                        WMConnection(INTERFACE_ETA,p, q, GlobalWMLESSide), &
+                                                        WMConnection(INTERFACE_ZETA,p,q, GlobalWMLESSide)/)
 
             ELSE
                 ! Element where h_wm lies is in another proc.
@@ -342,7 +347,7 @@ DO iGlobalSide=1, nWMLESSides_global
                     WMLESRecvFromProc(iProc) = .TRUE.
                 END IF
 
-                HWMRecvInfo_tmp(1:4, nHWMRecvPoints_tmp(iProc), iProc) = (/WMConnection(INTERFACE_L, p, q, iGlobalSide), REAL(p), REAL(q), REAL(iWMLESSide)/)
+                HWMRecvInfo_tmp(1:4, nHWMRecvPoints_tmp(iProc), iProc) = (/WMConnection(INTERFACE_L, p, q, GlobalWMLESSide), REAL(p), REAL(q), REAL(iWMLESSide)/)
 
             END IF ! IF ELSE element containing h_wm is local to this proc.
         END DO; END DO ! p, q
@@ -353,13 +358,13 @@ DO iGlobalSide=1, nWMLESSides_global
 
         DO p=0,PP_N; DO q=0,PP_N
 
-            iElem = INT(WMConnection(INTERFACE_ELEMSEND,p,q,iGlobalSide)) ! Global ElemID
+            iElem = INT(WMConnection(INTERFACE_ELEMSEND,p,q,GlobalWMLESSide)) ! Global ElemID
             IF ((iElem.GT.offsetElem) .AND. (iElem.LE.(offsetElem+nElems))) THEN
                 ! This proc. is not responsible for WMLES BC imposition, but it contains
                 ! the info in h_wm point.
                 ! Hence, we need to SEND this info to the proc. responsible for BC imposition
 
-                iProc = ELEMIPROC(INT(WMConnection(INTERFACE_ELEMRECV,p,q,iGlobalSide)))
+                iProc = ELEMIPROC(INT(WMConnection(INTERFACE_ELEMRECV,p,q,GlobalWMLESSide)))
 
                 nHWMSendPoints_tmp(iProc) = nHWMSendPoints_tmp(iProc) + 1 ! Number of flow props to send to the responsible rank
                 IF (.NOT.WMLESSendToProc(iProc)) THEN
@@ -394,13 +399,13 @@ DO iGlobalSide=1, nWMLESSides_global
                 ! Anyway, the first approach is being used here since it prevents bugs from this "automatic" and
                 ! fortunate mapping (due to the way the parallel domain decomposition is done and how we read the info)
                 
-                HWMSendInfo_tmp(nHWMPropSend+1:nHWMPropSend+4,nHWMSendPoints_tmp(iProc),iProc) = (/WMConnection(INTERFACE_L,p,q,iGlobalSide), REAL(p), REAL(q), REAL(iGlobalSide)/)
+                HWMSendInfo_tmp(nHWMPropSend+1:nHWMPropSend+4,nHWMSendPoints_tmp(iProc),iProc) = (/WMConnection(INTERFACE_L,p,q,GlobalWMLESSide), REAL(p), REAL(q), REAL(iGlobalBCSide)/)
 
                 nHWMInterpPoints = nHWMInterpPoints + 1
                 HWMInterpInfo_tmp(:,nHWMInterpPoints) = (/REAL(iElem-offsetElem), &
-                                                        WMConnection(INTERFACE_XI, p, q, iGlobalSide), &
-                                                        WMConnection(INTERFACE_ETA,p, q, iGlobalSide), &
-                                                        WMConnection(INTERFACE_ZETA,p,q, iGlobalSide)/)
+                                                        WMConnection(INTERFACE_XI, p, q, GlobalWMLESSide), &
+                                                        WMConnection(INTERFACE_ETA,p, q, GlobalWMLESSide), &
+                                                        WMConnection(INTERFACE_ZETA,p,q, GlobalWMLESSide)/)
 
                 SendToInterpPoint_tmp(nHWMSendPoints_tmp(iProc), iProc) = nHWMInterpPoints
 
@@ -597,6 +602,7 @@ USE MOD_Globals
 USE MOD_PreProc
 USE MOD_Basis
 USE MOD_WMLES_Vars
+USE MOD_WMLES_Utils                 ,ONLY: GetParams
 USE MOD_Mesh_Vars
 USE MOD_Interpolation_Vars
 USE MOD_DG_Vars                     
@@ -605,16 +611,18 @@ IMPLICIT NONE
 
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-INTEGER                             :: sProc, FPInd, IPInd, IntPInd
+INTEGER                             :: sProc, FPInd, IPInd, IntPInd, adj_uinv
 INTEGER                             :: p,q,r,ElemID
-REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag
-REAL                                :: vel_inst(3), rho_inst, tangvec(3), tau_w_vec(3)
+REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag, beta_l, inner_prod, ddfddn, etainf, eta_wm, eta_delta
+REAL, ALLOCATABLE                   :: xis(:), fprimes(:)
+REAL                                :: vel_inst(3), rho_inst, tangvec(3), tau_w_vec(3), eta_root
 INTEGER                             :: SurfLowUp ! Debug
 
-INTEGER                             :: i, k, SideID
+INTEGER                             :: i, k, SideID, locSide
 INTEGER                             :: iSendPoint, iLocalPoint
 REAL                                :: xi, eta, zeta
 REAL                                :: L_xi(0:PP_N), L_eta(0:PP_N), L_zeta(0:PP_N)
+LOGICAL                             :: isLE
 !==================================================================================================================================
 IF (.NOT.WMLESInitDone) THEN
     CALL CollectiveStop(__STAMP__,&
@@ -635,25 +643,28 @@ CALL StartReceiveHwmMPIData()
 
 ! First, we interpolate all h_wm information in the elements that this proc. owns, and that
 ! needs to be sent to another proc. (for BC imposition and calculation)
-DO iSendPoint=1, WMLESSendRange(2,nWMLESSendProcs) ! loop from 1 to the last send point
-    xi = HWMInterpInfo(2, SendToInterpPoint(iSendPoint))
-    eta = HWMInterpInfo(3, SendToInterpPoint(iSendPoint))
-    zeta = HWMInterpInfo(4, SendToInterpPoint(iSendPoint))
+IF (nWMLESSendProcs.NE.0) THEN
+    ! IF above avoid errors when indexing WMLESSendRange -- even though when compiled in RELEASE mode everything works fine....
+    DO iSendPoint=1, WMLESSendRange(2,nWMLESSendProcs) ! loop from 1 to the last send point
+        xi = HWMInterpInfo(2, SendToInterpPoint(iSendPoint))
+        eta = HWMInterpInfo(3, SendToInterpPoint(iSendPoint))
+        zeta = HWMInterpInfo(4, SendToInterpPoint(iSendPoint))
 
-    ! Evaluate all the 1D Lagrange polynomials at each specific standard coordinate
-    CALL LagrangeInterpolationPolys(xi,  PP_N, xGP, wBary, L_xi)
-    CALL LagrangeInterpolationPolys(eta, PP_N, xGP, wBary, L_eta)
-    CALL LagrangeInterpolationPolys(zeta,PP_N, xGP, wBary, L_zeta)
+        ! Evaluate all the 1D Lagrange polynomials at each specific standard coordinate
+        CALL LagrangeInterpolationPolys(xi,  PP_N, xGP, wBary, L_xi)
+        CALL LagrangeInterpolationPolys(eta, PP_N, xGP, wBary, L_eta)
+        CALL LagrangeInterpolationPolys(zeta,PP_N, xGP, wBary, L_zeta)
 
-    ! Interpolate the flow properties at h_wm point
-    DO k=1,3 ! Loop for velocity components
-        HWMSendInfo(k, iSendPoint) = InterpolateHwm(INT(HWMInterpInfo(1, SendToInterpPoint(iSendPoint))), & ! iElem
-                                        L_xi, L_eta, L_zeta, k+1, prim=.TRUE.)
+        ! Interpolate the flow properties at h_wm point
+        DO k=1,3 ! Loop for velocity components
+            HWMSendInfo(k, iSendPoint) = InterpolateHwm(INT(HWMInterpInfo(1, SendToInterpPoint(iSendPoint))), & ! iElem
+                                            L_xi, L_eta, L_zeta, k+1, prim=.TRUE.)
+        END DO
+        ! Adjust for Laminar
+        !IF (nHWMPropSend.GT.3) HWMSendInfo(4, i) = InterpolateHwm(INT(HWMInterpInfo(1, SendToInterpPoint(i))), & ! iElem
+        !                                    L_xi, L_eta, L_zeta, 5, prim=.TRUE.)
     END DO
-    ! Adjust for Laminar
-    !IF (nHWMPropSend.GT.3) HWMSendInfo(4, i) = InterpolateHwm(INT(HWMInterpInfo(1, SendToInterpPoint(i))), & ! iElem
-    !                                    L_xi, L_eta, L_zeta, 5, prim=.TRUE.)
-END DO
+END IF
 
 ! Send the information to the appropriate MPI procs.
 CALL StartSendHwmMPIData()
@@ -683,21 +694,6 @@ DO iLocalPoint=1, nHWMLocalPoints
             = InterpolateHwm(INT(HWMInterpInfo(1, LocalToInterpPoint(iLocalPoint))), & ! iElem
                             L_xi, L_eta, L_zeta, k, prim=.TRUE.)
     END DO
-    ! HWMInfo(2, INT(HWMLocalInfo(2, iLocalPoint)), & ! p
-    !             INT(HWMLocalInfo(3, iLocalPoint)), & ! q
-    !             INT(HWMLocalInfo(4, iLocalPoint))) & ! iWMLESSide
-    !         = InterpolateHwm(INT(HWMInterpInfo(1, LocalToInterpPoint(iLocalPoint))), & ! iElem
-    !                         L_xi, L_eta, L_zeta, 2, prim=.TRUE.)
-    ! HWMInfo(3, INT(HWMLocalInfo(2, iLocalPoint)), & ! p
-    !             INT(HWMLocalInfo(3, iLocalPoint)), & ! q
-    !             INT(HWMLocalInfo(4, iLocalPoint))) & ! iWMLESSide
-    !         = InterpolateHwm(INT(HWMInterpInfo(1, LocalToInterpPoint(iLocalPoint))), & ! iElem
-    !                         L_xi, L_eta, L_zeta, 3, prim=.TRUE.)
-    ! HWMInfo(4, INT(HWMLocalInfo(2, iLocalPoint)), & ! p
-    !             INT(HWMLocalInfo(3, iLocalPoint)), & ! q
-    !             INT(HWMLocalInfo(4, iLocalPoint))) & ! iWMLESSide
-    !         = InterpolateHwm(INT(HWMInterpInfo(1, LocalToInterpPoint(iLocalPoint))), & ! iElem
-    !                         L_xi, L_eta, L_zeta, 4, prim=.TRUE.)
 END DO
 
 ! Finish receiving h_wm info from other procs.
@@ -729,22 +725,11 @@ SELECT CASE(WallModel)
             VelMag = SQRT(VelMag)
             tangvec = tangvec/VelMag ! Unit tangential vector
 
-            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
-            ! Force tangvec to be in the x dir
-            ! tangvec = (/1.,0.,0./)
-            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
             utang = DOT_PRODUCT(HWMInfo(2:4,p,q,SideID),tangvec)
 
             u_tau = NewtonLogLaw(utang, (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))), HWMInfo(1,p,q,SideID)) ! rho_wall is used here (through UPrim_master). Read TODO above
             tau_w_mag = UPrim_master(1,p,q,WMLESToBCSide(SideID))*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = tau_w_mag*tangvec
-
-            !<-=-=-=-=- DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
-            ! Create vector aligned with wall-normal velocity with tau_xy
-            ! tau_w_vec = (/0.,tau_w_mag,0./)
-            ! Project it onto the normal direction so that the correct sign is imposed
-            ! tauxy = DOT_PRODUCT(tau_w_vec(:),TangVec2(:,p,q,FV_ENABLED,SideID))
-            !<-=-=-=-=- END OF DEBUG; REMOVE LATER IF IT DOES NOT WORK =-=-=-=-=>!
 
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
             SELECT CASE(SideToElem(S2E_LOC_SIDE_ID, WMLESToBCSide(SideID)))
@@ -761,22 +746,84 @@ SELECT CASE(WallModel)
                     WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
                     WMLES_TauW(2,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
             END SELECT
-            ! WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),NormVec(1:3,p,q,0,WMLESToBCSide(SideID)))
-            ! WMLES_TauW(2,p,q,SideID) = 0.
 
-            LOGWRITE(*,'(2(I9,1X), I7,1X, 2(I2,1X), 3(E10.4,1X), 3(E10.4,1X), 2(E10.4,1X))') &
-                    WMLESToBCSide(SideID)+offsetBCSides, SideID, WMLESToBCSide(SideID), p, q, HWMInfo(2,p,q,SideID), HWMInfo(3,p,q,SideID), HWMInfo(4,p,q,SideID), &
-                    utang, HWMInfo(1,p,q,SideID), u_tau, WMLES_TauW(1,p,q,SideID), WMLES_TauW(2,p,q,SideID)
-            LOGWRITE(*,*) 'loc, NormVec', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), NormVec(:,p, q, FV_ENABLED, SideID)
-            LOGWRITE(*,*) 'loc, TangVec1', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), TangVec1(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
-            LOGWRITE(*,*) 'loc, TangVec2', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), TangVec2(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
-            LOGWRITE(*,*) 'loc, Face_xGP', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), Face_xGP(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
+            ! LOGWRITE(*,'(2(I9,1X), I7,1X, 2(I2,1X), 3(E10.4,1X), 3(E10.4,1X), 2(E10.4,1X))') &
+            !         WMLESToBCSide(SideID)+offsetBCSides, SideID, WMLESToBCSide(SideID), p, q, HWMInfo(2,p,q,SideID), HWMInfo(3,p,q,SideID), HWMInfo(4,p,q,SideID), &
+            !         utang, HWMInfo(1,p,q,SideID), u_tau, WMLES_TauW(1,p,q,SideID), WMLES_TauW(2,p,q,SideID)
+            ! LOGWRITE(*,*) 'loc, NormVec', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), NormVec(:,p, q, FV_ENABLED, SideID)
+            ! LOGWRITE(*,*) 'loc, TangVec1', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), TangVec1(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
+            ! LOGWRITE(*,*) 'loc, TangVec2', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), TangVec2(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
+            ! LOGWRITE(*,*) 'loc, Face_xGP', SideToElem(S2E_LOC_SIDE_ID,WMLESToBCSide(SideID)), Face_xGP(:,p, q, FV_ENABLED, WMLESToBCSide(SideID))
         END DO; END DO ! p,q
     END DO ! iSide
 
+  CASE (WMLES_FALKNER_SKAN)
+    DO SideID=1,nWMLESSides
+        DO p=0,PP_N; DO q=0,PP_N
+            isLE = .FALSE.
+            inner_prod = DOT_PRODUCT(NormVec(1:3,p,q,0,WMLESToBCSide(SideID)), (/0., 1., 0./))
+            IF (ABS(Face_xGP(1,p,q,0,WMLESToBCSide(SideID))).LE.1E-6) isLE = .TRUE.
+            ! Calculate beta (half-angle of the "local wedge")
+            ! TODO: Adjust for angle of attack (freestream flow angle)
+            IF (inner_prod.LT.0) THEN ! upper surface
+                beta_l = ACOS(DOT_PRODUCT(-TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
+            ELSE
+                beta_l = ACOS(DOT_PRODUCT(TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
+            END IF
+            beta_l = beta_l*(2./PI)
+            CALL FalknerSkan(SIGN(1.0,beta_l), beta_l, etainf, ddfddn, xis, fprimes)
+            eta_delta = etainf
+            ! Look for eta_delta (i.e., eta such that fprime ~ 0.99)
+            DO i=1,SIZE(fprimes,1)
+                IF (fprimes(i)>=0.99) THEN
+                    eta_delta = xis(i)*etainf
+                    EXIT
+                END IF
+            END DO
+            ! Project the velocity vector onto the normal vector and subtract this projection (in the
+            ! wall-normal direction) from the velocity. The result is the velocity aligned with the
+            ! tangential direction
+            tangvec = HWMInfo(2:4,p,q,SideID) - DOT_PRODUCT(HWMInfo(2:4,p,q,SideID),NormVec(1:3,p,q,0,WMLESToBCSide(SideID)))*NormVec(1:3,p,q,0,WMLESToBCSide(SideID))
+            
+            VelMag = 0.
+                DO i=1,3
+                    VelMag = VelMag + tangvec(i)**2
+                END DO
+            VelMag = SQRT(VelMag)
+            tangvec = tangvec/VelMag ! Unit tangential vector
+
+            utang = DOT_PRODUCT(HWMInfo(2:4,p,q,SideID),tangvec)
+            ! Should we just get the x-component of the velocity in this case?
+            ! Since tau_xy is not being computed directly from this projection... 
+            ! I mean, the computed tau_xy is indeed aligned with the x-direction according to the model...
+            adj_uinv = 0
+            IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
+                DO WHILE(adj_uinv.LE.10)
+                    eta_root = SQRT((1. / ((2.-beta_l) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
+                    eta_wm = HWMInfo(1,p,q,SideID)*eta_root
+                    IF ((eta_wm.GE.eta_delta) .OR. ALMOSTEQUALABSOLUTE(eta_wm, eta_delta, 1E-3)) EXIT
+                    CALL GetParams(eta_wm/etainf)
+                    utang = utang/fs_u
+                    adj_uinv = adj_uinv + 1
+                END DO
+            END IF
+            tau_w_vec = mu0*ddfddn*eta_root*tangvec
+
+            ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
+            !IF (isLE) THEN ! leading edge (x ~ 0)
+                ! Check tangents for upper/lower surface
+            !ELSE
+                ! sign of inner_prod takes into account upper/lower surfaces
+                WMLES_TauW(1,p,q,SideID) = SIGN(1.,inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                WMLES_TauW(2,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+            !END IF      
+        END DO; END DO
+    END DO
+
+
   CASE DEFAULT
     CALL Abort(__STAMP__,&
-         'Unknown definition of Wall Model.')
+         'Wall Model not yet implemented!')
 
 END SELECT
 
@@ -843,7 +890,7 @@ LOGWRITE(*,'(X)')
 END SUBROUTINE EvalDiffFlux3D_WMLES
 
 !==================================================================================================================================
-!> Evaluate solution at current time t at recordpoint positions and fill output buffer
+!> Evaluate solution at the point corresponding to the wall model height h_wm within element iElem
 !==================================================================================================================================
 FUNCTION InterpolateHwm(iElem,L_xi,L_eta,L_zeta,comp,prim)
 ! MODULES
@@ -913,12 +960,6 @@ REAL                        :: f,fprime
 
 NewtonLogLaw = 1.0 ! Initial guess, usually not so bad for u_tau
 iter = 0
-LOGWRITE(*,'(30("=-"))')
-LOGWRITE(*,'(A60)') 'NewtonLogLaw Logging/Debug Information'
-LOGWRITE(*,'(30("=-"))')
-LOGWRITE(*,'(A15,2X,E15.8)') 'Sim. time: ', t
-LOGWRITE(*,'(A15,2X,E15.8)') 'dpdx: ', dpdx
-LOGWRITE(*,'(3(A15,2X))') 'u_tau', 'f', 'fprime'
 
 SELECT CASE(WallModel)
 
@@ -950,8 +991,6 @@ END SELECT
 IF (iter.EQ.10) THEN 
     LOGWRITE(*,*) "NEWTON METHOD FAILED TO CONVERGE!"
 END IF
-
-LOGWRITE(*,'(15("-"),A30,15("-"))') 'END OF NewtonLogLaw LOGGING'
 IF (Logging) FLUSH(UNIT_logOut)
 
 
@@ -990,6 +1029,115 @@ DO WHILE(iter.LT.10) ! Maximum number of iterations. Usually, u_tau is found wit
 END DO
 
 END FUNCTION NewtonCouette
+
+
+!==================================================================================================================================
+!> Solves the Falkner-Skan Equation using an iterative procedure
+!> See Zhang, J., Chen, B. - An Iterative Method for Solving the Falkner-Skan Equation
+!==================================================================================================================================
+SUBROUTINE FalknerSkan(beta0, beta1, etainf, ddfddn, xis, dfdn, tol1, tol2)
+! MODULES
+USE MOD_WMLES_Vars
+USE MOD_WMLES_Utils
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! INPUT/OUTPUT VARIABLES
+REAL, INTENT(IN)                            :: beta0        ! Parameter that defines the actual equation to be solved
+REAL, INTENT(IN)                            :: beta1        ! Parameter that defines the actual equation to be solved
+REAL, INTENT(OUT)                           :: etainf       ! Value of the free boundary, where fprime = 1, i.e. eta -> inf
+REAL, INTENT(OUT)                           :: ddfddn       ! Value of the second derivative of f that matches the boundary conditions at eta -> 1
+REAL, INTENT(OUT), OPTIONAL, ALLOCATABLE    :: xis(:)       ! Final time-steps xis
+REAL, INTENT(OUT), OPTIONAL, ALLOCATABLE    :: dfdn(:)      ! Final solution for all "time-steps" xis
+REAL, INTENT(IN), OPTIONAL                  :: tol1         ! tolerance for the convergence of |p|
+REAL, INTENT(IN), OPTIONAL                  :: tol2         ! tolerance for the convergence of |q|
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+PROCEDURE(RHS), POINTER      :: func
+REAL                         :: f, u, v, tol_p, tol_q, d_alpha, d23_alpha, d23_eta, l_s, r_s
+REAL, ALLOCATABLE            :: xi_25(:), sol_25(:,:), xi_27(:), sol_27(:,:)
+INTEGER                      :: N16, N25, N27, k, n, i
+LOGICAL                      :: k_conv, n_conv, out_solution, out_tsteps
+REAL, DIMENSION(3)           :: y0
+REAL, DIMENSION(2)           :: rhs_23
+!----------------------------------------------------------------------------------------------------------------------------------
+! Set the parameters of the equation ("globally")
+beta_0 = beta0
+beta = beta1
+
+! Set tolerances for convergence
+tol_p = 1E-10
+tol_q = 1E-6
+out_tsteps = .FALSE.
+out_solution = .FALSE.
+IF (PRESENT(tol1)) tol_p = tol1
+IF (PRESENT(tol2)) tol_q = tol2
+IF (PRESENT(xis)) out_tsteps = .TRUE.
+IF (PRESENT(dfdn)) out_solution = .TRUE.
+
+! First guess of the global solution
+alpha = 1.0
+IF (beta .LT. 10) THEN
+    eta_inf = 1.0
+ELSE
+    eta_inf = 0.1
+END IF
+k=0
+k_conv = .FALSE.
+DO WHILE (.NOT.k_conv)
+    n_conv = .FALSE.
+    n=0
+    DO WHILE (.NOT.n_conv)
+        func => RHS16
+        y0(1) = 0.; y0(2) = 0.; y0(3) = alpha
+        CALL SOLVE_ODE(func, 0., y0, 1., sol_16, xi_16, max_h=1./100.)
+        func => RHS25
+        y0(1) = 0.; y0(2) = 0.; y0(3) = 1.
+        CALL SOLVE_ODE(func, 0., y0, 1., sol_25, xi_25, max_h=1./100., preStep=.TRUE.)
+        N16 = SIZE(xi_16,1)
+        N25 = SIZE(xi_25,1)
+        d_alpha = - (sol_16(2,N16) - 1.) / sol_25(2,N25)
+        alpha = alpha + d_alpha
+        n = n+1
+        IF (ABS(sol_16(2,N16)-1) .LE. tol_p) n_conv = .TRUE.
+    END DO
+
+    func => RHS27
+    y0(1) = 0.; y0(2) = 0.; y0(3) = 0.
+    CALL SOLVE_ODE(func, 0., y0, 1., sol_27, xi_27, max_h=1./100., preStep=.TRUE.)
+    N27 = SIZE(xi_27,1)
+
+    rhs_23(1) =  1. - sol_16(2,N16)
+    rhs_23(2) = -1. * sol_16(3,N16)
+    l_s = sol_25(2,N25) - (sol_25(3,N25) * sol_27(2,N27) / sol_27(3,N27))
+    r_s = (-1. * rhs_23(2) * sol_27(2,N27) / sol_27(3,N27)) + rhs_23(1)
+    d23_alpha = r_s / l_s
+
+    l_s = sol_27(2,N27)
+    r_s = rhs_23(1) - sol_25(2,N25)*d23_alpha
+    d23_eta = r_s / l_s
+
+    eta_inf = eta_inf + d23_eta
+    alpha = alpha + d23_alpha
+    k = k+1
+    IF (ABS(sol_16(2,N16)-1).LE.tol_p .AND. ABS(sol_16(3,N16)).LE.tol_q) k_conv=.TRUE.
+END DO
+
+ddfddn = alpha
+etainf = eta_inf
+
+IF (out_tsteps) THEN
+    SDEALLOCATE(xis)
+    ALLOCATE(xis(N16))
+    xis(:) = xi_16(:)
+END IF
+IF (out_solution) THEN
+    SDEALLOCATE(dfdn)
+    ALLOCATE(dfdn(N16))
+    dfdn(:) = sol_16(2,:)
+END IF
+
+
+END SUBROUTINE FalknerSkan
 
 !==================================================================================================================================
 !> Subroutine that controls the receive operations for the Tau_W to be exchanged between processors.
@@ -1067,19 +1215,22 @@ CALL MPI_Waitall(nWMLESRecvProcs,WMLES_RecvRequests,MPI_STATUSES_IGNORE,iError)
 ! In addition to guaranteeing that the info has been received and HWMRecvInfo is populated,
 ! we also manage the entries in HWMInfo, using the mapping received in the message itself.
 
-DO i=1,WMLESRecvRange(2,nWMLESRecvProcs)
-    HWMInfo(1, INT(HWMRecvInfo(nHWMPropSend+2, i)), & ! p
-                INT(HWMRecvInfo(nHWMPropSend+3, i)), & ! q
-                INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides) & ! iWMLESSide
-            = HWMRecvInfo(nHWMPropSend+1, i) ! h_wm value
+IF (nWMLESRecvProcs.NE.0) THEN
+    ! IF above avoid errors when indexing WMLESRecvRange -- even though when compiled in RELEASE mode everything works fine....
+    DO i=1,WMLESRecvRange(2,nWMLESRecvProcs)
+        HWMInfo(1, INT(HWMRecvInfo(nHWMPropSend+2, i)), & ! p
+                    INT(HWMRecvInfo(nHWMPropSend+3, i)), & ! q
+                    INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides) & ! iWMLESSide
+                = HWMRecvInfo(nHWMPropSend+1, i) ! h_wm value
 
-    DO k=1,nHWMPropSend
-        HWMInfo(k+1, INT(HWMRecvInfo(nHWMPropSend+2, i)), & ! p
-                INT(HWMRecvInfo(nHWMPropSend+3, i)), & ! q
-                INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides) & ! iWMLESSide
-            = HWMRecvInfo(k, i) ! flow property corresponding to index k
+        DO k=1,nHWMPropSend
+            HWMInfo(k+1, INT(HWMRecvInfo(nHWMPropSend+2, i)), & ! p
+                    INT(HWMRecvInfo(nHWMPropSend+3, i)), & ! q
+                    INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides) & ! iWMLESSide
+                = HWMRecvInfo(k, i) ! flow property corresponding to index k
+        END DO
     END DO
-END DO
+END IF
 
 END SUBROUTINE FinishExchangeHWMData
 

@@ -107,6 +107,9 @@
 #define INTERFACE_L        15
 #define N_INTERFACE_PARAMS 15
 
+#define INTERFACE_SHAPE    1
+#define SHAPE_BOUNDARY     2
+
 
 ! Entry position in BC
 #define MI_SIDEID 1

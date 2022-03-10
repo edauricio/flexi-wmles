@@ -55,17 +55,23 @@ CALL prms%CreateLogicalOption(      "doVisu"           , "Visualize the generate
 CALL prms%CreateLogicalOption(      "cartesianMode"    , "Assume the elements are aligned with the wall-normal direction" ,".TRUE.")
 CALL prms%CreateLogicalOption(      "useGaussPoints"   , "Use the nearest gauss point as the interface location, except for first"// &
                                                           " or last point GL point" ,".FALSE.")
-CALL prms%CreateIntFromStringOption("interfaceShape"   , "Shape of the interface")
+CALL prms%CreateIntFromStringOption("boundaryLayerRegime", "Regime of boundary layer. Laminar/Transition/Turbulent")
+CALL addStrListEntry("boundaryLayerRegime", "Laminar", BLREGIME_LAMINAR)
+CALL addStrListEntry("boundaryLayerRegime", "Transition", BLREGIME_TRANSITION)
+CALL addStrListEntry("boundaryLayerRegime", "Turbulent", BLREGIME_TURBULENT)
+CALL prms%CreateRealOption("xTransitionPoint", "Streamwise location of boundary layer laminar-turbulent transition (for Transition BL Regime)")
+CALL prms%CreateIntFromStringOption("interfaceShape"   , "Shape of the interface", multiple=.TRUE.)
 CALL addStrListEntry(               'interfaceShape'   , 'constant', INTERFACESHAPE_CONSTANT)
 CALL addStrListEntry(               'interfaceShape'   , 'linearx',  INTERFACESHAPE_LINEARX)
 CALL addStrListEntry(               'interfaceShape'   , 'naca64418',INTERFACESHAPE_NACA64418)
-CALL prms%CreateRealOption(         "interfaceDistance", "Distance of the interface from the wall (interface shape constant)")
-CALL prms%CreateRealOption(         "xStart"           , "First x position of linear function (interface shape linearX)")
-CALL prms%CreateRealOption(         "xEnd"             , "Last x position of linear function (interface shape linearX)")
+CALL addStrListEntry(               'interfaceShape'   , 'blasius',INTERFACESHAPE_BLASIUS)
+CALL prms%CreateRealOption(         "interfaceDistance", "Distance of the interface from the wall (interface shape constant)", multiple=.TRUE.)
+CALL prms%CreateRealOption(         "xStart"           , "First x position of linear function (interface shape linearX)", multiple=.TRUE.)
+CALL prms%CreateRealOption(         "xEnd"             , "Last x position of linear function (interface shape linearX)", multiple=.TRUE.)
 CALL prms%CreateRealOption(         "distanceStart"    , "Interface distance at first x position of linear function "//&
-                                                         "(interface shape linearX)")
+                                                         "(interface shape linearX)", multiple=.TRUE.)
 CALL prms%CreateRealOption(         "distanceEnd"      , "Interface distance at last x position of linear function "//&
-                                                         "(interface shape linearX)")
+                                                         "(interface shape linearX)", multiple=.TRUE.)
 CALL prms%CreateIntOption(          "NSuper",           "Supersampling polynomial degree","5")
 
 ! check for command line argument --help or --markdown
