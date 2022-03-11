@@ -819,7 +819,6 @@ SELECT CASE(WallModel)
             !END IF      
         END DO; END DO
     END DO
-    WRITE(*,'(30("=-"))')
 
 
   CASE DEFAULT
