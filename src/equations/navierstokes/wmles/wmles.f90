@@ -814,8 +814,8 @@ SELECT CASE(WallModel)
                 ! Check tangents for upper/lower surface
             !ELSE
                 ! sign of inner_prod takes into account upper/lower surfaces
-                WMLES_TauW(1,p,q,SideID) = SIGN(1.,inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
-                WMLES_TauW(2,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+                WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                WMLES_TauW(2,p,q,SideID) = SIGN(1.,-inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
             !END IF      
         END DO; END DO
     END DO
