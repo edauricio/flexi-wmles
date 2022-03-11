@@ -766,12 +766,12 @@ SELECT CASE(WallModel)
             ! Calculate beta (half-angle of the "local wedge")
             ! TODO: Adjust for angle of attack (freestream flow angle)
             IF (inner_prod.LT.0) THEN ! upper surface
-                beta_l = ACOS(DOT_PRODUCT(-TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
+                beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(SideID)))*ACOS(DOT_PRODUCT(-TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
             ELSE
-                beta_l = ACOS(DOT_PRODUCT(TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
-            END IF
+                beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(SideID)))*ACOS(DOT_PRODUCT(TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
+            END IF            
             beta_l = beta_l*(2./PI)
-            CALL FalknerSkan(SIGN(1.0,beta_l), beta_l, etainf, ddfddn, xis, fprimes)
+            CALL FalknerSkan(1.0, beta_l, etainf, ddfddn, xis, fprimes)
             eta_delta = etainf
             ! Look for eta_delta (i.e., eta such that fprime ~ 0.99)
             DO i=1,SIZE(fprimes,1)
@@ -819,6 +819,7 @@ SELECT CASE(WallModel)
             !END IF      
         END DO; END DO
     END DO
+    WRITE(*,'(30("=-"))')
 
 
   CASE DEFAULT
