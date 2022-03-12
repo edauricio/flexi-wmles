@@ -30,6 +30,7 @@ INTEGER, PARAMETER :: WMLES_EQTBLE = 6
 INTEGER, PARAMETER :: WMLES_COUETTE = 7
 INTEGER, PARAMETER :: WMLES_FALKNER_SKAN = 8
 INTEGER, PARAMETER :: WMLES_LAMINAR_INTEGRAL = 9
+INTEGER, PARAMETER :: WMLES_FSLL = 10 ! Falker-Skan + Loglaw (complete regime model)
 
 REAL, PARAMETER    :: PI = 3.141592653589
 
@@ -49,13 +50,30 @@ REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! First index: 1 or 2, where 1 is tau_xy and 2 is tau_yz
                                                    ! Second and third indices: indices "i,j" of the BC face
                                                    ! Fourth index: WMLES Side
+REAL,ALLOCATABLE            :: FSBeta(:,:,:)        ! Beta of Falkner-Skan equations for each (p,q,nWMLESSide) of the laminar region
+REAL,ALLOCATABLE            :: FSDelta(:,:,:)       ! Eta value (similarity variable) corresponding to the boundary layer edge, according
+                                                    ! to the Falkner-Skan solution, for each point (p,q,nWMLESSide)
+REAL,ALLOCATABLE            :: FSEtaInf(:,:,:)    ! "Free boundary" eta_inf for each point (p,q,nWMLESSide) according to Falkner-Skan solution
+REAL,ALLOCATABLE            :: FSWallShear(:,:,:)   ! Solution of f'' at eta=0 ( i.e., "FS Wall Shear") from Falkner Skan equation
+                                                    ! for each point (p,q,nWMLESSide)
+REAL,ALLOCATABLE            :: FSEta(:,:,:,:)         ! Cached eta's for each step when advancing the Falkner-Skan solution in eta-direcion
+                                                      ! using the RK scheme, for each point (p,q,nWMLESSide)
+
+REAL,ALLOCATABLE            :: FSFPrime(:,:,:,:)    ! Cached solution (f') of the Falkner-Skan equation at each "time-step" (steps along the
+                                                    ! similarity variable direction), for each point (p,q,nWMLESSide)
 
 INTEGER                     :: nWMLESSides ! Number of WMLES BC Sides                                                   
+INTEGER                     :: nWMLaminarSides ! Number of Laminar WM BC Sides                                                   
+INTEGER                     :: nWMTurbulentSides ! Number of Turbulent WM BC Sides                                                   
 INTEGER,ALLOCATABLE         :: BCSideToWMLES(:) ! Mapping between WMLES BC Side and Mesh BCSide.
                                            ! Usage: BCSideToWMLES(SideID), SideID \in [1:nBCSides]
                                            ! OUTPUT: [1:nWMLESSides]
 INTEGER,ALLOCATABLE         :: WMLESToBCSide(:) ! Inverse of BCSideToWMLES mapping, that is,
                                                 ! get SideID of BC from WMLESSideID
+INTEGER,ALLOCATABLE         :: WMLESToLaminarSide(:)      ! Mapping from WMLES Side ID to Laminar Side number
+INTEGER,ALLOCATABLE         :: WMLESToTurbulentSide(:)    ! Mapping from WMLES Side ID to Turbulent Side number
+INTEGER,ALLOCATABLE         :: WMLESShapeInfo(:,:)  ! Information about the number of the shape (when two shapes are present, the first is laminar and the second turbulent)
+                                                    ! Also, second position for first index indicates whether this side is a boundary between shapes
 
 LOGICAL                     :: WMLESInitDone = .FALSE.
 
@@ -63,8 +81,9 @@ LOGICAL                     :: WMLESInitDone = .FALSE.
 REAL                        :: beta_0, beta            ! Parameters defining the actual equation to be solved
 REAL                        :: eta_inf, alpha          ! Final solutions
 REAL, ALLOCATABLE           :: xi_16(:)                ! Vector of time points when solving the RHS16 system
-REAL, ALLOCATABLE           :: sol_16(:,:)             ! Vector of time points when solving the RHS16 system
+REAL, ALLOCATABLE           :: sol_16(:,:)             ! Solution vector of the RHS16 system for each time point xi_16
 REAL                        :: fs_f, fs_u, fs_v        ! Solution variables of the first ODE system solved, used subsequently in the other two systems
+                                                       ! These variables actually correspond to f, f' and f''
 
 #if USE_MPI
 !----------------------------------------------------------------------------------------------------------------------------------

@@ -224,6 +224,7 @@ IF(STRICMP(RK,"Dormand-Prince")) THEN
     err_exp = -1. / (RK_ErrOrder + 1)
     nStages=6
 ELSE IF (STRICMP(RK,"Fehlberg")) THEN
+    ! NOTE: TO BE IMPLEMENTED
     RK_ID=2
     nStages=4 ! ??
 END IF

@@ -89,7 +89,7 @@ IMPLICIT NONE
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
 REAL                            :: WMLES_Tol, RealTmp
-INTEGER                         :: SideID, iSide, GlobalWMLESSide, LocSide, MineCnt, nSideIDs, offsetSideID, iGlobalBCSide
+INTEGER                         :: SideID, iSide, GlobalWMLESSide, LocSide, MineCnt, nSideIDs, offsetSideID, iGlobalBCSide, NMax
 INTEGER                         :: Loc_hwmElemID, Glob_hwmElemID, OppSideID
 REAL                            :: hwmElem_NodeCoords(3,0:NGeo,0:NGeo,0:NGeo), OppSideNodeCoords(3,4)
 INTEGER                         :: TotalNWMLESSides, GlobalOppSideID, InnerOppSideID
@@ -100,8 +100,8 @@ INTEGER, ALLOCATABLE            :: WMLESToBCSide_tmp(:), TauW_Proc_tmp(:,:,:,:)
 REAL, ALLOCATABLE               :: OthersPointInfo(:,:,:) ! indices-- 1-3: hwm_Coords, 4-6: TangVec1, 7: Glob_hwmElemID
 INTEGER                         :: WallStressCount_local(0:nProcessors-1), WallStressCount(0:nProcessors-1)
 INTEGER                         :: FirstElemInd, LastElemInd, FirstSideInd, LastSideInd
-REAL, ALLOCATABLE               :: PointInfo(:,:)
-REAL                            :: h_wm_Coords(3), DistanceVect(3), Distance
+REAL, ALLOCATABLE               :: xi(:), fps(:), FSBeta_tmp(:,:,:), FSDelta_tmp(:,:,:), FSEta_tmp(:,:,:,:), FSPrime_tmp(:,:,:,:), FSAlpha_tmp(:,:,:), FSEtaInf_tmp(:,:,:)
+REAL                            :: h_wm_Coords(3), DistanceVect(3), Distance, inner_prod, beta_l, etainf, ddfddn
 LOGICAL                         :: FoundhwmElem, FoundhwmPoint
 INTEGER                         :: nPoints_MINE_tmp(2), nPoints_YOUR_tmp(2) ! indices -- 1: my rank, 2: how many points u calculate for me
 INTEGER                         :: nPoints_MINE_tmp2(0:nProcessors-1), Proc_RecvTauW_tmp(nProcessors), Proc_SendTauW_tmp(nProcessors)
@@ -118,7 +118,7 @@ INTEGER                         :: hwmRank
 INTEGER                         :: iExt, nWMLESSides_global, N_WMConnection, nBCSides_global
 INTEGER                         :: iElem, iProc, iWMLESSide
 CHARACTER(LEN=255)              :: WMConnectionFileProposal, NodeType_WMConnection
-INTEGER, ALLOCATABLE            :: BCSideToWMLES_global(:)
+INTEGER, ALLOCATABLE            :: BCSideToWMLES_global(:), WMLESShapeInfo_global(:,:), WMLESToTurbulentSide_tmp(:), WMLESToLaminarSide_tmp(:)
 REAL, ALLOCATABLE               :: WMConnection(:,:,:,:), HWMInterpInfo_tmp(:,:)
 
 #if USE_MPI
@@ -208,6 +208,10 @@ nBCSides_global =  nBCSides
 ALLOCATE(BCSideToWMLES_global(nBCSides_global))
 CALL ReadArray('MappingWM',1,(/nBCSides_global/),0,1,IntArray=BCSideToWMLES_global)
 
+! Read boundary shape information
+ALLOCATE(WMLESShapeInfo_global(2,nWMLESSides_global))
+CALL ReadArray('sideShapeInfo',2,(/2,nWMLESSides_global/),0,1,IntArray=WMLESShapeInfo_global)
+
 ! Read connection information
 ALLOCATE(WMConnection(N_INTERFACE_PARAMS,0:PP_N,0:PP_N,nWMLESSides_global))
 CALL ReadArray('WM',4,&
@@ -215,6 +219,18 @@ CALL ReadArray('WM',4,&
                0,4,RealArray=WMConnection)
 
 CALL CloseDataFile()
+
+! Consistency check between given WM Connection file and chosen WMLES Model
+! (for complete models, file must have 2 shapes; for single models, file must have only 1 shape)
+SELECT CASE(WallModel)
+    CASE(WMLES_FSLL)
+        IF (MAXVAL(WMLESShapeInfo_global(1,:)).NE.2) &
+            CALL Abort(__STAMP__, 'Complete modeling strategy (laminar+turbulent regions) was selected, but a WM Connection File with a single WMLES shape was given.')
+
+    CASE DEFAULT
+        IF (MAXVAL(WMLESShapeInfo_global(1,:)).EQ.2) &
+            CALL Abort(__STAMP__, 'WM Connection File with two shapes for a complete model (laminar+turbulent) was given, but a single modeling strategy was selected.')
+END SELECT
 
 ! We now count the number of WM sides in this proc. (i.e., local info)
 ALLOCATE(BCSideToWMLES(nBCSides))
@@ -279,6 +295,7 @@ ALLOCATE(LocalToInterpPoint_tmp(nWMLESSides_global*(PP_N+1)*(PP_N+1)))
 ALLOCATE(SendToInterpPoint_tmp(nWMLESSides_global*(PP_N+1)*(PP_N+1), 0:nProcessors-1))
 ALLOCATE(WMLESRecvFromProc(0:nProcessors-1))
 ALLOCATE(WMLESSendToProc(0:nProcessors-1))
+ALLOCATE(WMLESShapeInfo(2,nWMLESSides))
 
 ! Initializing the allocated memory values
 
@@ -296,9 +313,10 @@ nHWMLocalPoints = 0
 nHWMInterpPoints = 0
 nWMLESRecvProcs = 0
 nWMLESSendProcs = 0
+WMLESShapeInfo = 0
 
 
-DO iGlobalBCSide=1, nBCSides_global
+DO iGlobalBCSide=1,nBCSides_global
     GlobalWMLESSide = BCSideToWMLES_global(iGlobalBCSide)
     IF (GlobalWMLESSide.EQ.0) CYCLE ! Not a modelled side
     IF (GlobalWMLESSide.GT.nWMLESSides_global) CALL Abort(__STAMP__, "Something's wrong with the global WMLES Side number information.")
@@ -309,6 +327,7 @@ DO iGlobalBCSide=1, nBCSides_global
             'Modeled local BC found in WM Connection file, but it has not been marked as a WMLES Side using the current config/mesh!')
 
         iWMLESSide = BCSideToWMLES(iGlobalBCSide-offsetBCSides)
+        WMLESShapeInfo(:,iWMLESSide) = WMLESShapeInfo_global(:,GlobalWMLESSide)
 
         ! We now check if we need to receive h_wm point info from another proc., or if h_wm is within a local element
         ! This check is done for each GL point within this BC side
@@ -476,6 +495,99 @@ DO i=1,nHWMLocalPoints
     HWMLocalInfo(1:4, i) = HWMLocalInfo_tmp(1:4, i)
 END DO
 
+! We now calculate the local, point-wise beta's defining the Falkner-Skan equation
+! profile to be solved for each point in the boundary layer pertaining to the laminar
+! region being modeled by the FS model, if any
+! In addition, since the final solution of the FS equation only depends on this beta,
+! we cache the solution points (along the similarity variable -- eta --  direction)
+! for later use in the model
+SELECT CASE(WallModel)
+    CASE(WMLES_FSLL,WMLES_FALKNER_SKAN)
+        ALLOCATE(FSBeta_tmp(0:PP_N,0:PP_N,nWMLESSides),FSDelta_tmp(0:PP_N,0:PP_N,nWMLESSides))
+        ALLOCATE(FSAlpha_tmp(0:PP_N,0:PP_N,nWMLESSides),FSEtaInf_tmp(0:PP_N,0:PP_N,nWMLESSides))
+        ALLOCATE(WMLESToLaminarSide_tmp(nWMLESSides),WMLESToTurbulentSide_tmp(nWMLESSides))
+        NMax = 0
+        nWMLaminarSides = 0
+        nWMTurbulentSides = 0
+        WMLESToLaminarSide_tmp = 0
+        WMLESToTurbulentSide_tmp = 0
+        ! Allocate generous temporary buffer for FS solution at each laminar boundary point
+        ALLOCATE(FSEta_tmp(1000,0:PP_N,0:PP_N,nWMLESSides),FSPrime_tmp(1000,0:PP_N,0:PP_N,nWMLESSides))
+        FSEta_tmp = 0
+        FSPrime_tmp = 0
+        DO iSide=1,nWMLESSides
+            IF (WMLESShapeInfo(1,iSide).EQ.1) THEN ! Laminar region
+                nWMLaminarSides = nWMLaminarSides + 1
+                WMLESToLaminarSide_tmp(iSide) = nWMLaminarSides
+                DO p=0,PP_N; DO q=0,PP_N
+                    inner_prod = DOT_PRODUCT(NormVec(1:3,p,q,0,WMLESToBCSide(iSide)), (/0., 1., 0./))
+                    ! TODO: Adjust for angle of attack (freestream flow angle)
+                    IF (inner_prod.LT.0) THEN ! upper surface
+                        beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(iSide)))*ACOS(DOT_PRODUCT(-TangVec2(1:3,p,q,0,WMLESToBCSide(iSide)), (/1., 0. ,0./)))
+                    ELSE
+                        beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(iSide)))*ACOS(DOT_PRODUCT(TangVec2(1:3,p,q,0,WMLESToBCSide(iSide)), (/1., 0. ,0./)))
+                    END IF
+                    FSBeta_tmp(p,q,iSide) = beta_l*(2./PI)
+                    
+                    ! Solve FS once for each point and cache the solution (needed later)
+                    CALL FalknerSkan(1.0, beta_l, etainf, ddfddn, xi, fps)
+                    FSAlpha_tmp(p,q,iSide) = ddfddn
+                    FSEtaInf_tmp(p,q,iSide) = etainf
+                    IF (SIZE(xi,1).GT.NMax) NMax = SIZE(xi,1)
+                    IF (NMax.GT.1000) CALL Abort(__STAMP__,'Unexpected size for "XI" of FalknerSkan solution')
+                    FSEta_tmp(1:SIZE(xi,1),p,q,iSide) = xi(:)
+                    FSPrime_tmp(1:SIZE(fps,1),p,q,iSide) = fps(:)
+                    
+
+                    ! Look for eta_delta (i.e., eta such that fprime ~ 0.99)
+                    FSDelta_tmp(p,q,iSide) = etainf
+                    DO i=1,SIZE(fps,1)
+                        IF (fps(i)>=0.99) THEN
+                            FSDelta_tmp(p,q,iSide) = xi(i)*etainf
+                            EXIT
+                        END IF
+                    END DO
+                END DO; END DO
+            ELSE
+                nWMTurbulentSides = nWMTurbulentSides + 1
+                WMLESToLaminarSide_tmp(iSide) = nWMTurbulentSides
+            END IF
+        END DO
+
+        ! Allocate permanent memory and copy data from buffer; free buffer next
+        ALLOCATE(WMLESToLaminarSide(nWMLaminarSides),WMLESToTurbulentSide(nWMTurbulentSides))
+        WMLESToLaminarSide = 0
+        WMLESToTurbulentSide = 0
+        DO iSide=1,nWMLaminarSides
+            WMLESToLaminarSide(iSide) = WMLESToLaminarSide_tmp(iSide)
+        END DO
+        DO iSide=1,nWMTurbulentSides
+            WMLESToTurbulentSide(iSide) = WMLESToTurbulentSide_tmp(iSide)
+        END DO
+        DEALLOCATE(WMLESToLaminarSide_tmp,WMLESToTurbulentSide_tmp)
+
+        ALLOCATE(FSBeta(0:PP_N,0:PP_N,nWMLaminarSides),FSDelta(0:PP_N,0:PP_N,nWMLaminarSides))
+        ALLOCATE(FSEtaInf(0:PP_N,0:PP_N,nWMLaminarSides),FSWallShear(0:PP_N,0:PP_N,nWMLaminarSides))
+        ALLOCATE(FSEta(NMax,0:PP_N,0:PP_N,nWMLaminarSides),FSFPrime(NMax,0:PP_N,0:PP_N,nWMLaminarSides))
+        DO iSide=1,nWMLaminarSides
+            DO p=0,PP_N; DO q=0,PP_N
+                FSBeta(p,q,iSide) = FSBeta_tmp(p,q,iSide)
+                FSDelta(p,q,iSide) = FSDelta_tmp(p,q,iSide)
+                FSWallShear(p,q,iSide) = FSAlpha_tmp(p,q,iSide)
+                FSEtaInf(p,q,iSide) = FSEtaInf_tmp(p,q,iSide)
+                DO i=1,NMax
+                    FSEta(i,p,q,iSide) = FSEta_tmp(i,p,q,iSide)
+                    FSFPrime(i,p,q,iSide) = FSPrime_tmp(i,p,q,iSide)
+                END DO
+            END DO; END DO
+        END DO
+        DEALLOCATE(FSBeta_tmp)
+        DEALLOCATE(FSDelta_tmp)
+        DEALLOCATE(FSEta_tmp)
+        DEALLOCATE(FSPrime_tmp)
+
+END SELECT
+
 
 !> =-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-
 !> Logging Information (mainly for debugging purposes)
@@ -613,8 +725,7 @@ IMPLICIT NONE
 ! LOCAL VARIABLES
 INTEGER                             :: sProc, FPInd, IPInd, IntPInd, adj_uinv
 INTEGER                             :: p,q,r,ElemID
-REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag, beta_l, inner_prod, ddfddn, etainf, eta_wm, eta_delta
-REAL, ALLOCATABLE                   :: xis(:), fprimes(:)
+REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag, fp, eta_wm, inner_prod
 REAL                                :: vel_inst(3), rho_inst, tangvec(3), tau_w_vec(3), eta_root
 INTEGER                             :: SurfLowUp ! Debug
 
@@ -761,25 +872,8 @@ SELECT CASE(WallModel)
     DO SideID=1,nWMLESSides
         DO p=0,PP_N; DO q=0,PP_N
             isLE = .FALSE.
-            inner_prod = DOT_PRODUCT(NormVec(1:3,p,q,0,WMLESToBCSide(SideID)), (/0., 1., 0./))
             IF (ABS(Face_xGP(1,p,q,0,WMLESToBCSide(SideID))).LE.1E-6) isLE = .TRUE.
-            ! Calculate beta (half-angle of the "local wedge")
-            ! TODO: Adjust for angle of attack (freestream flow angle)
-            IF (inner_prod.LT.0) THEN ! upper surface
-                beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(SideID)))*ACOS(DOT_PRODUCT(-TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
-            ELSE
-                beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(SideID)))*ACOS(DOT_PRODUCT(TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)), (/1., 0. ,0./)))
-            END IF            
-            beta_l = beta_l*(2./PI)
-            CALL FalknerSkan(1.0, beta_l, etainf, ddfddn, xis, fprimes)
-            eta_delta = etainf
-            ! Look for eta_delta (i.e., eta such that fprime ~ 0.99)
-            DO i=1,SIZE(fprimes,1)
-                IF (fprimes(i)>=0.99) THEN
-                    eta_delta = xis(i)*etainf
-                    EXIT
-                END IF
-            END DO
+
             ! Project the velocity vector onto the normal vector and subtract this projection (in the
             ! wall-normal direction) from the velocity. The result is the velocity aligned with the
             ! tangential direction
@@ -799,21 +893,22 @@ SELECT CASE(WallModel)
             adj_uinv = 0
             IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
                 DO WHILE(adj_uinv.LE.10)
-                    eta_root = SQRT((1. / ((2.-beta_l) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
+                    eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
                     eta_wm = HWMInfo(1,p,q,SideID)*eta_root
-                    IF ((eta_wm.GE.eta_delta) .OR. ALMOSTEQUALABSOLUTE(eta_wm, eta_delta, 1E-3)) EXIT
-                    CALL GetParams(eta_wm/etainf)
-                    utang = utang/fs_u
+                    IF (eta_wm.GE.FSDelta(p,q,WMLESToLaminarSide(SideID)) .OR. ALMOSTEQUALABSOLUTE(eta_wm, FSDelta(p,q,WMLESToLaminarSide(SideID)), 1E-3)) EXIT
+                    fp = GetNewFP(eta_wm/FSEtaInf(p,q,WMLESToLaminarSide(SideID)), FSEta(:,p,q,WMLESToLaminarSide(SideID)), FSFPrime(:,p,q,WMLESToLaminarSide(SideID)))
+                    utang = utang/fp
                     adj_uinv = adj_uinv + 1
                 END DO
             END IF
-            tau_w_vec = mu0*ddfddn*eta_root*tangvec
+            tau_w_vec = mu0*FSWallShear(p,q,WMLESToLaminarSide(SideID))*eta_root*tangvec
 
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
             !IF (isLE) THEN ! leading edge (x ~ 0)
                 ! Check tangents for upper/lower surface
             !ELSE
                 ! sign of inner_prod takes into account upper/lower surfaces
+                inner_prod = DOT_PRODUCT(NormVec(1:3,p,q,0,WMLESToBCSide(SideID)), (/0., 1., 0./))
                 WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
                 WMLES_TauW(2,p,q,SideID) = SIGN(1.,-inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
             !END IF      
@@ -934,6 +1029,44 @@ END DO; END DO !k
 InterpolateHwm = tmpSum
 
 END FUNCTION InterpolateHwm
+
+
+!==================================================================================================================================
+!> Interpolate Falkner-Skan solution for f'
+!==================================================================================================================================
+FUNCTION GetNewFP(xi, steps, solut)
+! MODULES
+
+IMPLICIT NONE
+!----------------------------------------------------------------------------------------------------------------------------------
+! INPUT/OUTPUT VARIABLES
+REAL, INTENT(IN)               :: xi                    ! Point in terms of similarity variable where f' should be interpolate to
+REAL, INTENT(IN)               :: steps(:)              ! Vector containing the steps from Runge-Kutta method
+REAL, INTENT(IN)               :: solut(:)              ! Solution f' for each point of the similarity variable in steps(:)
+REAL                           :: GetNewFP
+!----------------------------------------------------------------------------------------------------------------------------------
+! LOCAL VARIABLES
+INTEGER                        :: i, sz
+REAL                           :: mx, fprime
+!----------------------------------------------------------------------------------------------------------------------------------
+
+! Naive, linear search will be used
+! Obviously, this can get much better, although vector steps(:) tends to be small-sized
+sz = SIZE(steps,1)
+DO i=1,sz
+    IF (steps(i).GE.xi) EXIT
+END DO
+
+IF (i.EQ.1) THEN
+    fprime = solut(1)
+ELSE
+    mx = (xi - steps(i-1)) * (solut(i) - solut(i-1)) / (steps(i) - steps(i-1))
+    fprime = mx + solut(i-1)
+END IF
+
+GetNewFP = fprime
+
+END FUNCTION GetNewFP
 
 
 !==================================================================================================================================
