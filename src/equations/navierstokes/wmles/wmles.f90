@@ -945,10 +945,10 @@ SELECT CASE(WallModel)
                 ! sign of inner_prod takes into account upper/lower surfaces
                 inner_prod = DOT_PRODUCT(NormVec(1:3,p,q,0,WMLESToBCSide(SideID)), (/0., 1., 0./))
                 !WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
-                !WMLES_TauW(2,p,q,SideID) = SIGN(1.,-inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+                WMLES_TauW(2,p,q,SideID) = SIGN(1.,-inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
                 ! TEST BELOW!! (See last commit)
                 WMLES_TauW(1,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
-                WMLES_TauW(2,p,q,SideID) = 0. ! TEST!!!
+                !WMLES_TauW(2,p,q,SideID) = 0. ! TEST!!!
             !END IF
             ! WRITE(211,*) SideID &
             !         ,",",WMLESToBCSide(SideID) &
