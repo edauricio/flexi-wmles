@@ -638,7 +638,7 @@ ELSE
         Hd_Face_loc(5,:,:)=0.
       END IF
 
-#ifdef WMLES
+#if WMLES
     CASE(5)
       LOGWRITE(*,*) '============== WMLES BOUNDARY FLUX ==============='
       LOGWRITE(*,*) 'nWMLESSide', BCSideToWMLES(SideID)

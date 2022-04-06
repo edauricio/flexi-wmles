@@ -505,20 +505,26 @@ SELECT CASE(WallModel)
     CASE(WMLES_FSLL,WMLES_FALKNER_SKAN)
         ALLOCATE(FSBeta_tmp(0:PP_N,0:PP_N,nWMLESSides),FSDelta_tmp(0:PP_N,0:PP_N,nWMLESSides))
         ALLOCATE(FSAlpha_tmp(0:PP_N,0:PP_N,nWMLESSides),FSEtaInf_tmp(0:PP_N,0:PP_N,nWMLESSides))
-        ALLOCATE(WMLESToLaminarSide_tmp(nWMLESSides),WMLESToTurbulentSide_tmp(nWMLESSides))
+        ALLOCATE(WMLESToLaminarSide(nWMLESSides),WMLESToTurbulentSide(nWMLESSides))
         NMax = 0
         nWMLaminarSides = 0
         nWMTurbulentSides = 0
-        WMLESToLaminarSide_tmp = 0
-        WMLESToTurbulentSide_tmp = 0
+        WMLESToLaminarSide = 0
+        WMLESToTurbulentSide = 0
         ! Allocate generous temporary buffer for FS solution at each laminar boundary point
         ALLOCATE(FSEta_tmp(1000,0:PP_N,0:PP_N,nWMLESSides),FSPrime_tmp(1000,0:PP_N,0:PP_N,nWMLESSides))
         FSEta_tmp = 0
         FSPrime_tmp = 0
+       ! OPEN(UNIT=211,  &
+       ! FILE='FSDebug.csv',      &
+       ! STATUS='UNKNOWN',  &
+       ! ACTION='WRITE', &
+       ! POSITION='APPEND')
+       !  WRITE(211,*) "wmside,bcside,surf,x,p,q,beta,delta_eta,alpha,etainf"
         DO iSide=1,nWMLESSides
             IF (WMLESShapeInfo(1,iSide).EQ.1) THEN ! Laminar region
                 nWMLaminarSides = nWMLaminarSides + 1
-                WMLESToLaminarSide_tmp(iSide) = nWMLaminarSides
+                WMLESToLaminarSide(iSide) = nWMLaminarSides
                 DO p=0,PP_N; DO q=0,PP_N
                     inner_prod = DOT_PRODUCT(NormVec(1:3,p,q,0,WMLESToBCSide(iSide)), (/0., 1., 0./))
                     ! TODO: Adjust for angle of attack (freestream flow angle)
@@ -527,48 +533,64 @@ SELECT CASE(WallModel)
                     ELSE
                         beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(iSide)))*ACOS(DOT_PRODUCT(TangVec2(1:3,p,q,0,WMLESToBCSide(iSide)), (/1., 0. ,0./)))
                     END IF
-                    FSBeta_tmp(p,q,iSide) = beta_l*(2./PI)
+                    FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)
                     
                     ! Solve FS once for each point and cache the solution (needed later)
-                    CALL FalknerSkan(1.0, beta_l, etainf, ddfddn, xi, fps)
-                    FSAlpha_tmp(p,q,iSide) = ddfddn
-                    FSEtaInf_tmp(p,q,iSide) = etainf
+                    CALL FalknerSkan(1.0, FSBeta_tmp(p,q,nWMLaminarSides), etainf, ddfddn, xi, fps)
+                    FSAlpha_tmp(p,q,nWMLaminarSides) = ddfddn
+                    FSEtaInf_tmp(p,q,nWMLaminarSides) = etainf
                     IF (SIZE(xi,1).GT.NMax) NMax = SIZE(xi,1)
-                    IF (NMax.GT.1000) CALL Abort(__STAMP__,'Unexpected size for "XI" of FalknerSkan solution')
-                    FSEta_tmp(1:SIZE(xi,1),p,q,iSide) = xi(:)
-                    FSPrime_tmp(1:SIZE(fps,1),p,q,iSide) = fps(:)
+                    IF (NMax.GT.1000) CALL Abort(__STAMP__,'Unexpected size for "XI" vector of FalknerSkan solution')
+                    FSEta_tmp(1:SIZE(xi,1),p,q,nWMLaminarSides) = xi(:)
+                    FSPrime_tmp(1:SIZE(fps,1),p,q,nWMLaminarSides) = fps(:)
                     
 
                     ! Look for eta_delta (i.e., eta such that fprime ~ 0.99)
-                    FSDelta_tmp(p,q,iSide) = etainf
+                    FSDelta_tmp(p,q,nWMLaminarSides) = etainf
                     DO i=1,SIZE(fps,1)
                         IF (fps(i)>=0.99) THEN
-                            FSDelta_tmp(p,q,iSide) = xi(i)*etainf
+                            FSDelta_tmp(p,q,nWMLaminarSides) = xi(i)*etainf
                             EXIT
                         END IF
                     END DO
+                    ! IF (BC(WMLESToBCSide(iSide)).EQ.1) THEN
+                    !     WRITE(211,*) iSide&
+                    !                 ,",",WMLESToBCSide(iSide)&
+                    !                 ,",upper,"&
+                    !                 ,Face_xGP(1,p,q,0,WMLESToBCSide(iSide)) &
+                    !                 ,",",p &
+                    !                 ,",",q &
+                    !                 ,",",FSBeta_tmp(p,q,iSide) &
+                    !                 ,",",FSDelta_tmp(p,q,iSide) &
+                    !                 ,",",FSAlpha_tmp(p,q,iSide) &
+                    !                 ,",",FSEtaInf_tmp(p,q,iSide)
+                    ! ELSE IF (BC(WMLESToBCSide(iSide)).EQ.2) THEN
+                    !     WRITE(211,*) iSide&
+                    !                 ,",",WMLESToBCSide(iSide)&
+                    !                 ,",lower,"&
+                    !                 ,Face_xGP(1,p,q,0,WMLESToBCSide(iSide)) &
+                    !                 ,",",p &
+                    !                 ,",",q &
+                    !                 ,",",FSBeta_tmp(p,q,iSide) &
+                    !                 ,",",FSDelta_tmp(p,q,iSide) &
+                    !                 ,",",FSAlpha_tmp(p,q,iSide) &
+                    !                 ,",",FSEtaInf_tmp(p,q,iSide)
+                    ! ELSE 
+                    !     WRITE(211,*) "none"
+                    ! END IF
                 END DO; END DO
             ELSE
                 nWMTurbulentSides = nWMTurbulentSides + 1
-                WMLESToLaminarSide_tmp(iSide) = nWMTurbulentSides
+                WMLESToTurbulentSide(iSide) = nWMTurbulentSides
             END IF
         END DO
 
         ! Allocate permanent memory and copy data from buffer; free buffer next
-        ALLOCATE(WMLESToLaminarSide(nWMLaminarSides),WMLESToTurbulentSide(nWMTurbulentSides))
-        WMLESToLaminarSide = 0
-        WMLESToTurbulentSide = 0
-        DO iSide=1,nWMLaminarSides
-            WMLESToLaminarSide(iSide) = WMLESToLaminarSide_tmp(iSide)
-        END DO
-        DO iSide=1,nWMTurbulentSides
-            WMLESToTurbulentSide(iSide) = WMLESToTurbulentSide_tmp(iSide)
-        END DO
-        DEALLOCATE(WMLESToLaminarSide_tmp,WMLESToTurbulentSide_tmp)
-
         ALLOCATE(FSBeta(0:PP_N,0:PP_N,nWMLaminarSides),FSDelta(0:PP_N,0:PP_N,nWMLaminarSides))
         ALLOCATE(FSEtaInf(0:PP_N,0:PP_N,nWMLaminarSides),FSWallShear(0:PP_N,0:PP_N,nWMLaminarSides))
         ALLOCATE(FSEta(NMax,0:PP_N,0:PP_N,nWMLaminarSides),FSFPrime(NMax,0:PP_N,0:PP_N,nWMLaminarSides))
+        
+
         DO iSide=1,nWMLaminarSides
             DO p=0,PP_N; DO q=0,PP_N
                 FSBeta(p,q,iSide) = FSBeta_tmp(p,q,iSide)
@@ -585,6 +607,8 @@ SELECT CASE(WallModel)
         DEALLOCATE(FSDelta_tmp)
         DEALLOCATE(FSEta_tmp)
         DEALLOCATE(FSPrime_tmp)
+        DEALLOCATE(FSAlpha_tmp)
+        DEALLOCATE(FSEtaInf_tmp)
 
 END SELECT
 
@@ -717,6 +741,7 @@ USE MOD_WMLES_Vars
 USE MOD_WMLES_Utils                 ,ONLY: GetParams
 USE MOD_Mesh_Vars
 USE MOD_Interpolation_Vars
+USE MOD_TimeDisc_Vars               ,ONLY: t
 USE MOD_DG_Vars                     
 USE MOD_EOS_Vars                    ,ONLY: mu0
 IMPLICIT NONE
@@ -725,7 +750,7 @@ IMPLICIT NONE
 ! LOCAL VARIABLES
 INTEGER                             :: sProc, FPInd, IPInd, IntPInd, adj_uinv
 INTEGER                             :: p,q,r,ElemID
-REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag, fp, eta_wm, inner_prod
+REAL                                :: u_tau, u_mean, tau_w_mag, utang, VelMag, fp, eta_wm, inner_prod, eps
 REAL                                :: vel_inst(3), rho_inst, tangvec(3), tau_w_vec(3), eta_root
 INTEGER                             :: SurfLowUp ! Debug
 
@@ -733,7 +758,7 @@ INTEGER                             :: i, k, SideID, locSide
 INTEGER                             :: iSendPoint, iLocalPoint
 REAL                                :: xi, eta, zeta
 REAL                                :: L_xi(0:PP_N), L_eta(0:PP_N), L_zeta(0:PP_N)
-LOGICAL                             :: isLE
+LOGICAL                             :: isLE, fopen
 !==================================================================================================================================
 IF (.NOT.WMLESInitDone) THEN
     CALL CollectiveStop(__STAMP__,&
@@ -841,7 +866,6 @@ SELECT CASE(WallModel)
             u_tau = NewtonLogLaw(utang, (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))), HWMInfo(1,p,q,SideID)) ! rho_wall is used here (through UPrim_master). Read TODO above
             tau_w_mag = UPrim_master(1,p,q,WMLESToBCSide(SideID))*(u_tau**2) ! CHECK TODO ABOVE
             tau_w_vec = tau_w_mag*tangvec
-
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
             SELECT CASE(SideToElem(S2E_LOC_SIDE_ID, WMLESToBCSide(SideID)))
                 CASE (ZETA_PLUS) ! Bottom wall
@@ -869,6 +893,13 @@ SELECT CASE(WallModel)
     END DO ! iSide
 
   CASE (WMLES_FALKNER_SKAN)
+    ! INQUIRE(unit=211, opened=fopen)
+    ! OPEN(UNIT=211,  &
+    !    FILE='FSDebug.csv',      &
+    !    STATUS='UNKNOWN',  &
+    !    ACTION='WRITE', &
+    !    POSITION='APPEND')
+    !  IF(.NOT.fopen)   WRITE(211,*) "wmside,bcside,surf,x,p,q,beta,delta_eta,alpha,t,eta_wm,utang,adj_uinv,isle,velx,vely,hwvx,hwvy,tangx,tangy,innerprod,wmxy,wmxz"
     DO SideID=1,nWMLESSides
         DO p=0,PP_N; DO q=0,PP_N
             isLE = .FALSE.
@@ -890,17 +921,21 @@ SELECT CASE(WallModel)
             ! Should we just get the x-component of the velocity in this case?
             ! Since tau_xy is not being computed directly from this projection... 
             ! I mean, the computed tau_xy is indeed aligned with the x-direction according to the model...
-            adj_uinv = 0
-            IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
-                DO WHILE(adj_uinv.LE.10)
-                    eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
-                    eta_wm = HWMInfo(1,p,q,SideID)*eta_root
-                    IF (eta_wm.GE.FSDelta(p,q,WMLESToLaminarSide(SideID)) .OR. ALMOSTEQUALABSOLUTE(eta_wm, FSDelta(p,q,WMLESToLaminarSide(SideID)), 1E-3)) EXIT
-                    fp = GetNewFP(eta_wm/FSEtaInf(p,q,WMLESToLaminarSide(SideID)), FSEta(:,p,q,WMLESToLaminarSide(SideID)), FSFPrime(:,p,q,WMLESToLaminarSide(SideID)))
-                    utang = utang/fp
-                    adj_uinv = adj_uinv + 1
-                END DO
-            END IF
+            ! adj_uinv = 0
+            ! IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
+            !     DO WHILE(adj_uinv.LE.10)
+            !         eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
+            !         eta_wm = HWMInfo(1,p,q,SideID)*eta_root
+            !         IF (eta_wm.GE.FSDelta(p,q,WMLESToLaminarSide(SideID)) .OR. ALMOSTEQUALABSOLUTE(eta_wm, FSDelta(p,q,WMLESToLaminarSide(SideID)), 1E-3)) EXIT
+            !         fp = GetNewFP(eta_wm/FSEtaInf(p,q,WMLESToLaminarSide(SideID)), FSEta(:,p,q,WMLESToLaminarSide(SideID)), FSFPrime(:,p,q,WMLESToLaminarSide(SideID)))
+            !         utang = utang/fp
+            !         adj_uinv = adj_uinv + 1
+            !     END DO
+            ! END IF
+            ! STRATEGY #2: No adjustment; only guarantee that we do not have a division-by-zero at the leading edge
+            eps=0.
+            IF (isLE) eps = 1E-6
+            eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps))) * utang**3)
             tau_w_vec = mu0*FSWallShear(p,q,WMLESToLaminarSide(SideID))*eta_root*tangvec
 
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
@@ -909,9 +944,35 @@ SELECT CASE(WallModel)
             !ELSE
                 ! sign of inner_prod takes into account upper/lower surfaces
                 inner_prod = DOT_PRODUCT(NormVec(1:3,p,q,0,WMLESToBCSide(SideID)), (/0., 1., 0./))
-                WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
-                WMLES_TauW(2,p,q,SideID) = SIGN(1.,-inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
-            !END IF      
+                !WMLES_TauW(1,p,q,SideID) = -1.*DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                !WMLES_TauW(2,p,q,SideID) = SIGN(1.,-inner_prod)*DOT_PRODUCT(tau_w_vec(1:3),TangVec1(1:3,p,q,0,WMLESToBCSide(SideID)))
+                ! TEST BELOW!! (See last commit)
+                WMLES_TauW(1,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
+                WMLES_TauW(2,p,q,SideID) = 0. ! TEST!!!
+            !END IF
+            ! WRITE(211,*) SideID &
+            !         ,",",WMLESToBCSide(SideID) &
+            !         ,",",BC(WMLESToBCSide(SideID))  &
+            !         ,",",Face_xGP(1,p,q,0,WMLESToBCSide(SIdeID))  &
+            !         ,",",p  &
+            !         ,",",q  &
+            !         ,",",FSBeta(p,q,WMLESToLaminarSide(SideID))  &
+            !         ,",",FSDelta(p,q,WMLESToLaminarSide(SideID))  &
+            !         ,",",FSWallShear(p,q,WMLESToLaminarSide(SideID))  &
+            !         ,",",t  &
+            !         ,",",eta_root  &
+            !         ,",",utang  &
+            !         ,",",eps &
+            !         ,",",0. &
+            !         ,",",UPrim_master(2,p,q,WMLESToBCSide(SideID)) &
+            !         ,",",UPrim_master(3,p,q,WMLESToBCSide(SideID)) &
+            !         ,",",HWMInfo(2,p,q,SideID) &
+            !         ,",",HWMInfo(3,p,q,SideID) &
+            !         ,",",tangvec(1) &
+            !         ,",",tangvec(2) &
+            !         ,",",inner_prod &
+            !         ,",",WMLES_TauW(1,p,q,SideID)&
+            !         ,",",WMLES_TauW(2,p,q,SideID)
         END DO; END DO
     END DO
 

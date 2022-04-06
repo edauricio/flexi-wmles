@@ -41,6 +41,9 @@ INTEGER,PARAMETER   :: INTERFACESHAPE_CONSTANT    = 1    !< Interface in constan
 INTEGER,PARAMETER   :: INTERFACESHAPE_LINEARX     = 2    !< Interface with linear variation in x
 INTEGER,PARAMETER   :: INTERFACESHAPE_NACA64418   = 3    !< Interface for the NACA64418 interface
 INTEGER,PARAMETER   :: INTERFACESHAPE_BLASIUS = 4        !< Interface considering Blasius laminar BL
+INTEGER,PARAMETER   :: INTERFACESHAPE_BLASLIN = 5       !< Interface for the NACA0012 airfoil
+INTEGER,PARAMETER   :: INTERFACESHAPE_NACA0012 = 6       !< Interface for the NACA0012 airfoil
+
 
 ! Parameters of interface shapes
 REAL,ALLOCATABLE    :: interfaceShapeInfo(:,:)         !< Stores inferface shape info
@@ -49,6 +52,8 @@ REAL,ALLOCATABLE    :: interfaceShapeInfo(:,:)         !< Stores inferface shape
 REAL                :: xTransition                     !< Location of transition point for Transition BL Regime
 ! INTERFACESHAPE_CONSTANT 
 REAL                :: interfaceDistance                 !< Constant distance of the interface away from the wall
+! INTERFACESHAPE_BLASIUS
+REAL                :: ReBlasius                        !< Reynolds number to be considered for Blasius BL interface
 
 ! Connection information
 REAL,ALLOCATABLE    :: wallconnect(:,:,:,:)              !< Stores the actual connection information

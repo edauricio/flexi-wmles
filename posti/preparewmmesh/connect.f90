@@ -130,6 +130,15 @@ DO iShape=1,nShapes
     interfaceShapeInfo(1,iShape) = GETREAL("distanceStart") ! Interface distance at first x position of blasius function
     interfaceShapeInfo(2,iShape) = GETREAL("xStart") ! First x position of blasius function
     interfaceShapeInfo(3,iShape) = GETREAL("xEnd") ! Last x position of blasius function
+    interfaceShapeInfo(4,iShape) = SQRT(1./GETREAL("Reynolds")) ! Unit-length Reynolds number to be considered for delta calculation
+  CASE(INTERFACESHAPE_BLASLIN)
+    interfaceShapeInfo(1,iShape) = GETREAL("distanceStart") ! Interface distance at first x position of blasius function
+    interfaceShapeInfo(2,iShape) = GETREAL("xStart") ! First x position of blasius function
+    interfaceShapeInfo(3,iShape) = GETREAL("distanceEnd") ! Last x position of blasius function
+    !interfaceShapeInfo(4,iShape) = GETREAL("distanceEnd") ! Interface distance at last x position of linear function
+    interfaceShapeInfo(4,iShape) = SQRT(1./GETREAL("Reynolds")) ! Unit-length Reynolds number to be considered for delta calculation
+  CASE(INTERFACESHAPE_NACA0012)
+    interfaceShapeInfo(1,iShape) = GETREAL("Reynolds")
   CASE(INTERFACESHAPE_NACA64418)
     ! Nothing to init here
   CASE DEFAULT
@@ -337,7 +346,7 @@ LOGICAL,INTENT(IN) :: cartesian
 ! LOCAL VARIABLES
 INTEGER           :: iSide,iSideModelled,ElemID,p,q,ElemID_send,i,refDirection,SideID,ElemID2
 INTEGER           :: nextLocSide,interfaceShape,iShape
-REAL              :: InterfaceCoordinates(3),wm_l
+REAL              :: InterfaceCoordinates(3),wm_l,lin,blas,fac
 REAL              :: ParamCoords(3)
 REAL              :: biggestScalProd,scalProd(3),xi_vec(3),eta_vec(3),zeta_vec(3)
 REAL              :: x
@@ -347,6 +356,11 @@ INTEGER           :: nSidesDone
 
 SWRITE(UNIT_stdOut,'(A)')' Starting to connect the boundary points to the interface...'
 nSidesDone = 0
+OPEN(UNIT=213,  &
+       FILE='BLCoords',      &
+       STATUS='UNKNOWN',  &
+       ACTION='WRITE',    &
+       POSITION='APPEND')
 
 ! Loop over all BC sides
 DO iSide = 1,nBCSides
@@ -375,6 +389,40 @@ DO iSide = 1,nBCSides
       CASE(INTERFACESHAPE_LINEARX)
         x = Face_xGP(1,p,q,0,iSide)
         wm_l = interfaceShapeInfo(1,iShape) + (x-interfaceShapeInfo(2,iShape))/(interfaceShapeInfo(3,iShape)-interfaceShapeInfo(2,iShape))*(interfaceShapeInfo(4,iShape)-interfaceShapeInfo(1,iShape))
+      CASE(INTERFACESHAPE_BLASIUS)
+        x = Face_xGP(1,p,q,0,iSide)
+        wm_l = interfaceShapeInfo(1,iShape) + 5.0*SQRT(x-interfaceShapeInfo(2,iShape))*interfaceShapeInfo(4,iShape)
+        IF (Face_xGP(1,p,q,0,iSide).GT.interfaceShapeInfo(3,iShape)) wm_l = 0. ! End of interface shape
+      CASE(INTERFACESHAPE_NACA0012)
+        x = Face_xGP(1,p,q,0,iSide)
+        IF (interfaceShapeInfo(1,iShape).EQ.4500) THEN
+          ! curve fit
+          wm_l = 0.01059585 + 0.11974983*x - 0.09797576*x**2 + 0.06436537*x**3
+        ELSE
+          CALL Abort(__STAMP__, "NACA0012 Shape: Reynolds must be 4500, 50000 or 100000")
+        END IF
+        !NACA2
+        !blas = 0.01 + 5.0*SQRT(1./4500.)*SQRT(x)
+        !lin = 0.01 + (x-0.)*(0.2-0.005)/(1.-0.)
+        ! fac = EXP(-10.*x)
+        ! wm_l = fac*lin + (1.-fac)*blas
+        !NACA3
+        ! blas = 0.01 + (0.2-0.01)/(1.-0.)*(x**2)
+        ! lin = 0.01 + (x-0.)*(0.2-0.01)/(1.-0.)
+        ! fac = EXP(-10.*x)
+        ! wm_l = (1.-fac)*lin + fac*blas
+        ! wm_l = 0.01 + (0.2-0.01)/(1.-0.)*(x**2)
+        ! NACA4
+        ! blas = 0.01 + 5.0*SQRT(1./6500.)*SQRT(x)
+        ! lin = 0.01 + (x-0.)*(0.12-0.01)/(1.-0.)
+        ! fac = EXP(-10.*x)
+        ! wm_l = (1.-fac)*lin + fac*blas
+      CASE(INTERFACESHAPE_BLASLIN)
+        x = Face_xGP(1,p,q,0,iSide)
+        blas = interfaceShapeInfo(1,iShape) + 5.0*interfaceShapeInfo(4,iShape)*SQRT(x-interfaceShapeInfo(2,iShape))
+        lin = interfaceShapeInfo(1,iShape) + (x-interfaceShapeInfo(2,iShape))/(1.-interfaceShapeInfo(2,iShape))*(interfaceShapeInfo(3,iShape)-interfaceShapeInfo(1,iShape))
+        fac = EXP(-10.*x)
+        wm_l = (1.-fac)*lin + fac*blas
       CASE(INTERFACESHAPE_NACA64418)
         x = Face_xGP(1,p,q,0,iSide)
         ! Check if we are on the lower or upper wall by comparing the BC name
@@ -394,6 +442,9 @@ DO iSide = 1,nBCSides
       wallconnect(INTERFACE_L,p,q,iSideModelled) = wm_l
       ! Coordinates of the interface = coordinate of boundary points plus distance in wall-normal direction (NormVec is outwards)
       InterfaceCoordinates = Face_xGP(:,p,q,0,iSide) - wm_l*NormVec(:,p,q,0,iSide)
+      !IF(BC(iSide).EQ.1) WRITE(213,*) Face_xGP(1,p,q,0,iSide), Face_xGP(2,p,q,0,iSide), NormVec(1,p,q,0,iSide), NormVec(2,p,q,0,iSide), InterfaceCoordinates(1), InterfaceCoordinates(2)
+      IF(BC(iSide).EQ.1) WRITE(*,*) InterfaceCoordinates(1), ",", InterfaceCoordinates(2), ",", Face_xGP(1,p,q,0,iSide), ",", wm_l
+      !IF(BC(iSide).EQ.2) WRITE(*,*) "lower", InterfaceCoordinates(1:2)
       
 
 #if (PP_NodeType==2)
@@ -447,9 +498,9 @@ DO iSide = 1,nBCSides
         ! ------ END OF CODE FOR PHILL ONLY
 
         ! ------ CODE FOR NOZZLE ONLY
-        IF (InterfaceCoordinates(1).GT. 0.) THEN
-          InterfaceCoordinates(1) = 0.
-        END IF
+        ! IF (InterfaceCoordinates(1).GT. 0.) THEN
+        !   InterfaceCoordinates(1) = 0.
+        ! END IF
         ! ------ END OF CODE FOR NOZZLE ONLY
         CALL SearchForParametricCoordinates(XCL_NGeo,NGeo,nElems,DCL_NGeo,Xi_CLNGeo,wBary_CLNGeo,NSuper,Vdm_NGeo_NSuper,&
                 Xi_NSuper,InterfaceCoordinates,ParamCoords,ElemID_send,ElemID)

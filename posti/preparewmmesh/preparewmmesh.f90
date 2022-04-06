@@ -65,6 +65,8 @@ CALL addStrListEntry(               'interfaceShape'   , 'constant', INTERFACESH
 CALL addStrListEntry(               'interfaceShape'   , 'linearx',  INTERFACESHAPE_LINEARX)
 CALL addStrListEntry(               'interfaceShape'   , 'naca64418',INTERFACESHAPE_NACA64418)
 CALL addStrListEntry(               'interfaceShape'   , 'blasius',INTERFACESHAPE_BLASIUS)
+CALL addStrListEntry(               'interfaceShape'   , 'naca0012',INTERFACESHAPE_NACA0012)
+CALL addStrListEntry(               'interfaceShape'   , 'blaslin',INTERFACESHAPE_BLASLIN)
 CALL prms%CreateRealOption(         "interfaceDistance", "Distance of the interface from the wall (interface shape constant)", multiple=.TRUE.)
 CALL prms%CreateRealOption(         "xStart"           , "First x position of linear function (interface shape linearX)", multiple=.TRUE.)
 CALL prms%CreateRealOption(         "xEnd"             , "Last x position of linear function (interface shape linearX)", multiple=.TRUE.)
@@ -72,6 +74,7 @@ CALL prms%CreateRealOption(         "distanceStart"    , "Interface distance at 
                                                          "(interface shape linearX)", multiple=.TRUE.)
 CALL prms%CreateRealOption(         "distanceEnd"      , "Interface distance at last x position of linear function "//&
                                                          "(interface shape linearX)", multiple=.TRUE.)
+CALL prms%CreateRealOption(         "Reynolds"         , "Unit-length Reynolds number to be considered for Blasius BL interface shape", multiple=.TRUE.)
 CALL prms%CreateIntOption(          "NSuper",           "Supersampling polynomial degree","5")
 
 ! check for command line argument --help or --markdown

@@ -106,7 +106,7 @@ OPTION(FLEXI_PARABOLIC "Enable parabolic terms of equation-system" ON)
 CMAKE_DEPENDENT_OPTION(FLEXI_EDDYVISCOSITY "Enable eddy viscosity modells" OFF
                                            "FLEXI_PARABOLIC" OFF)
 CMAKE_DEPENDENT_OPTION(FLEXI_WMLES "Enable Wall Modeled LES" ON
-					"FLEXI_PARABOLIC" ON)
+			"FLEXI_PARABOLIC" OFF)
 OPTION(FLEXI_MKL "Use MKL libraries instead of BLAS/LAPACK" OFF)
 OPTION(FLEXI_PAPI "Use PAPI library to perform performance measurements (e.g. flop counts)." OFF)
 OPTION(FLEXI_FV "Enable Finite Volume subcell shock capturing" OFF)
@@ -219,7 +219,9 @@ ELSE()
 ENDIF()
 
 IF(FLEXI_WMLES)
-	ADD_DEFINITIONS(-DWMLES)
+	ADD_DEFINITIONS(-DWMLES=1)
+ELSE()
+	ADD_DEFINITIONS(-DWMLES=0)
 ENDIF()
 
 # =========================================================================
