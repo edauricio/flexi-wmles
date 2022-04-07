@@ -921,21 +921,21 @@ SELECT CASE(WallModel)
             ! Should we just get the x-component of the velocity in this case?
             ! Since tau_xy is not being computed directly from this projection... 
             ! I mean, the computed tau_xy is indeed aligned with the x-direction according to the model...
-            adj_uinv = 0
-            IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
-                DO WHILE(adj_uinv.LE.10)
-                    eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
-                    eta_wm = HWMInfo(1,p,q,SideID)*eta_root
-                    IF (eta_wm.GE.FSDelta(p,q,WMLESToLaminarSide(SideID)) .OR. ALMOSTEQUALABSOLUTE(eta_wm, FSDelta(p,q,WMLESToLaminarSide(SideID)), 1E-3)) EXIT
-                    fp = GetNewFP(eta_wm/FSEtaInf(p,q,WMLESToLaminarSide(SideID)), FSEta(:,p,q,WMLESToLaminarSide(SideID)), FSFPrime(:,p,q,WMLESToLaminarSide(SideID)))
-                    utang = utang/fp
-                    adj_uinv = adj_uinv + 1
-                END DO
-            END IF
+            ! adj_uinv = 0
+            ! IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
+            !     DO WHILE(adj_uinv.LE.10)
+            !         eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
+            !         eta_wm = HWMInfo(1,p,q,SideID)*eta_root
+            !         IF (eta_wm.GE.FSDelta(p,q,WMLESToLaminarSide(SideID)) .OR. ALMOSTEQUALABSOLUTE(eta_wm, FSDelta(p,q,WMLESToLaminarSide(SideID)), 1E-3)) EXIT
+            !         fp = GetNewFP(eta_wm/FSEtaInf(p,q,WMLESToLaminarSide(SideID)), FSEta(:,p,q,WMLESToLaminarSide(SideID)), FSFPrime(:,p,q,WMLESToLaminarSide(SideID)))
+            !         utang = utang/fp
+            !         adj_uinv = adj_uinv + 1
+            !     END DO
+            ! END IF
             ! STRATEGY #2: No adjustment; only guarantee that we do not have a division-by-zero at the leading edge
-            ! eps=0.
-            ! IF (isLE) eps = 1E-6
-            ! eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps))) * utang**3)
+            eps=0.
+            IF (isLE) eps = 1E-6
+            eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps))) * utang**3)
             tau_w_vec = mu0*FSWallShear(p,q,WMLESToLaminarSide(SideID))*eta_root*tangvec
 
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
