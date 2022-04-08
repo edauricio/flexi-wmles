@@ -533,7 +533,25 @@ SELECT CASE(WallModel)
                     ELSE
                         beta_l = SIGN(1.0,-TangVec2(2,p,q,0,WMLESToBCSide(iSide)))*ACOS(DOT_PRODUCT(TangVec2(1:3,p,q,0,WMLESToBCSide(iSide)), (/1., 0. ,0./)))
                     END IF
-                    FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)
+                    ! Three betas:
+                    ! 1) Only geometric
+                    ! 2) Geometric + taking into account x-position
+                    ! 3) Geometric + taking x-position + taking beta itself into account
+                    ! 4) Geometric + taking into account x-position (differently than 2)
+                    ! The logic is that, since there is a boundary layer growing in the x direction,
+                    ! we must have a "smoothing" of the wedge beta, because the local flow will feel
+                    ! it differently in terms of acceleration and wall shear stress due to this boundary layer
+                    ! And also, if we have a positive beta, the boundary layer is growing slower, whereas
+                    ! for negative betas, it is the contrary.
+                    
+                    !1) 
+                    !FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)
+                    !2)
+                    !FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)*EXP(-Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))
+                    !3)
+                    !FSBeta_tmp(p,q,nWMLaminarSides) = 0.39*beta_l*(2./PI)*EXP(0.3*(beta_l*(2./PI)) - Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))
+                    !4)
+                    FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)*EXP(Face_xGP(1,p,q,0,WMLESToBCSide(iSide))-1.)
                     
                     ! Solve FS once for each point and cache the solution (needed later)
                     CALL FalknerSkan(1.0, FSBeta_tmp(p,q,nWMLaminarSides), etainf, ddfddn, xi, fps)
