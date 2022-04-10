@@ -56,7 +56,7 @@ CALL addStrListEntry('WallModel', 'Spalding', WMLES_SPALDING)
 CALL addStrListEntry('WallModel', 'EquilibriumTBLE', WMLES_EQTBLE)
 CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
 CALL addStrListEntry('WallModel', 'FalknerSkan', WMLES_FALKNER_SKAN)
-
+CALL prms%CreateRealOption('Reynolds', "Reynolds number of the simulation -- important for Laminar wall-modeling")
 CALL prms%CreateRealOption('vKarman', "von Karman constant for the log-law model", "0.41")
 CALL prms%CreateRealOption('B', "intercept coefficient for the log-law model", "5.2")
 
@@ -88,7 +88,7 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
-REAL                            :: WMLES_Tol, RealTmp
+REAL                            :: WMLES_Tol, RealTmp, SSig, Re
 INTEGER                         :: SideID, iSide, GlobalWMLESSide, LocSide, MineCnt, nSideIDs, offsetSideID, iGlobalBCSide, NMax
 INTEGER                         :: Loc_hwmElemID, Glob_hwmElemID, OppSideID
 REAL                            :: hwmElem_NodeCoords(3,0:NGeo,0:NGeo,0:NGeo), OppSideNodeCoords(3,4)
@@ -503,6 +503,7 @@ END DO
 ! for later use in the model
 SELECT CASE(WallModel)
     CASE(WMLES_FSLL,WMLES_FALKNER_SKAN)
+        Re = GETREAL("Reynolds")
         ALLOCATE(FSBeta_tmp(0:PP_N,0:PP_N,nWMLESSides),FSDelta_tmp(0:PP_N,0:PP_N,nWMLESSides))
         ALLOCATE(FSAlpha_tmp(0:PP_N,0:PP_N,nWMLESSides),FSEtaInf_tmp(0:PP_N,0:PP_N,nWMLESSides))
         ALLOCATE(WMLESToLaminarSide(nWMLESSides),WMLESToTurbulentSide(nWMLESSides))
@@ -551,7 +552,15 @@ SELECT CASE(WallModel)
                     !3)
                     !FSBeta_tmp(p,q,nWMLaminarSides) = 0.39*beta_l*(2./PI)*EXP(0.3*(beta_l*(2./PI)) - Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))
                     !4)
-                    FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)*EXP(Face_xGP(1,p,q,0,WMLESToBCSide(iSide))-1.)
+                    !FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)*EXP(Face_xGP(1,p,q,0,WMLESToBCSide(iSide))-1.)
+                    !5)
+                    !FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI)*EXP(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)) - 1. - 0.3*(beta_l*(2./PI)))
+                    !6) Based on "stretched" Sigmoid function -- https://math.stackexchange.com/questions/1214167/how-to-remodel-sigmoid-function-so-as-to-move-stretch-enlarge-it
+                    ! We use the function below to decrease Beta based on the Reynolds number of the flow: 
+                    ! Z(t) = 1 / (1 + EXP(-(1/Re_c) * LOG(b) * Re)), where Re_c is the Reynolds where we want the inflection point in the function,
+                    ! and b is a constant which also determines such inflection point. We are currently using Sigmoid b = 2 + SQRT(3)
+                    SSig = 1. / (1. + EXP(-(1./50000.) * LOG(2.+SQRT(3.)) *  Re))
+                    FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     
                     ! Solve FS once for each point and cache the solution (needed later)
                     CALL FalknerSkan(1.0, FSBeta_tmp(p,q,nWMLaminarSides), etainf, ddfddn, xi, fps)
@@ -760,6 +769,7 @@ USE MOD_WMLES_Utils                 ,ONLY: GetParams
 USE MOD_Mesh_Vars
 USE MOD_Interpolation_Vars
 USE MOD_TimeDisc_Vars               ,ONLY: t
+USE MOD_Lifting_Vars                ,ONLY: gradUy_master
 USE MOD_DG_Vars                     
 USE MOD_EOS_Vars                    ,ONLY: mu0
 IMPLICIT NONE
@@ -911,13 +921,15 @@ SELECT CASE(WallModel)
     END DO ! iSide
 
   CASE (WMLES_FALKNER_SKAN)
+    ! IF (ALMOSTEQUALABSOLUTE(t,1E-1,1E-6)) THEN
     ! INQUIRE(unit=211, opened=fopen)
     ! OPEN(UNIT=211,  &
     !    FILE='FSDebug.csv',      &
     !    STATUS='UNKNOWN',  &
     !    ACTION='WRITE', &
     !    POSITION='APPEND')
-    !  IF(.NOT.fopen)   WRITE(211,*) "wmside,bcside,surf,x,p,q,beta,delta_eta,alpha,t,eta_wm,utang,adj_uinv,isle,velx,vely,hwvx,hwvy,tangx,tangy,innerprod,wmxy,wmxz"
+    !  IF(.NOT.fopen)   WRITE(211,*) "wmside,bcside,surf,x,p,q,beta,delta_eta,alpha,t,eta_wm,eta_root,mu0,utang,adj_uinv,velx,vely,dudy,hwvx,hwvy,tangx,tangy,innerprod,wmxy,wmxz"
+    ! END IF
     DO SideID=1,nWMLESSides
         DO p=0,PP_N; DO q=0,PP_N
             isLE = .FALSE.
@@ -940,20 +952,23 @@ SELECT CASE(WallModel)
             ! Since tau_xy is not being computed directly from this projection... 
             ! I mean, the computed tau_xy is indeed aligned with the x-direction according to the model...
             ! adj_uinv = 0
-            ! IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
-            !     DO WHILE(adj_uinv.LE.10)
-            !         eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * Face_xGP(1,p,q,0,WMLESToBCSide(SideID)))) * utang**3)
-            !         eta_wm = HWMInfo(1,p,q,SideID)*eta_root
-            !         IF (eta_wm.GE.FSDelta(p,q,WMLESToLaminarSide(SideID)) .OR. ALMOSTEQUALABSOLUTE(eta_wm, FSDelta(p,q,WMLESToLaminarSide(SideID)), 1E-3)) EXIT
-            !         fp = GetNewFP(eta_wm/FSEtaInf(p,q,WMLESToLaminarSide(SideID)), FSEta(:,p,q,WMLESToLaminarSide(SideID)), FSFPrime(:,p,q,WMLESToLaminarSide(SideID)))
-            !         utang = utang/fp
-            !         adj_uinv = adj_uinv + 1
-            !     END DO
-            ! END IF
+            !! IF (.NOT.isLE) THEN ! If leading edge, then about any eta_wm will suffice, and utang is taken as above
+                ! eps = 0.
+                ! IF (isLE) eps = 1E-6
+                ! DO WHILE(adj_uinv.LE.100)
+                !     eta_root = SQRT((utang**3) / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps)))
+                !     !eta_wm = HWMInfo(1,p,q,SideID)*eta_root
+                !     eta_wm = HWMInfo(1,p,q,SideID)*eta_root/utang
+                !     IF (eta_wm.GE.FSDelta(p,q,WMLESToLaminarSide(SideID)) .OR. ALMOSTEQUALABSOLUTE(eta_wm, FSDelta(p,q,WMLESToLaminarSide(SideID)), 1E-3)) EXIT
+                !     fp = GetNewFP(eta_wm/FSEtaInf(p,q,WMLESToLaminarSide(SideID)), FSEta(:,p,q,WMLESToLaminarSide(SideID)), FSFPrime(:,p,q,WMLESToLaminarSide(SideID)))
+                !     utang = utang/fp
+                !     adj_uinv = adj_uinv + 1
+                ! END DO
+            !! END IF
             ! STRATEGY #2: No adjustment; only guarantee that we do not have a division-by-zero at the leading edge
             eps=0.
             IF (isLE) eps = 1E-6
-            eta_root = SQRT((1. / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps))) * utang**3)
+            eta_root = SQRT((utang**3) / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps)))
             tau_w_vec = mu0*FSWallShear(p,q,WMLESToLaminarSide(SideID))*eta_root*tangvec
 
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
@@ -968,6 +983,7 @@ SELECT CASE(WallModel)
                 ! WMLES_TauW(1,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
                 ! WMLES_TauW(2,p,q,SideID) = 0. ! TEST!!!
             !END IF
+            ! IF (ALMOSTEQUALABSOLUTE(t,1E-1,1E-6)) THEN
             ! WRITE(211,*) SideID &
             !         ,",",WMLESToBCSide(SideID) &
             !         ,",",BC(WMLESToBCSide(SideID))  &
@@ -978,12 +994,14 @@ SELECT CASE(WallModel)
             !         ,",",FSDelta(p,q,WMLESToLaminarSide(SideID))  &
             !         ,",",FSWallShear(p,q,WMLESToLaminarSide(SideID))  &
             !         ,",",t  &
+            !         ,",",0.  & !eta_wm
             !         ,",",eta_root  &
+            !         ,",",mu0  &
             !         ,",",utang  &
-            !         ,",",eps &
-            !         ,",",0. &
+            !         ,",",0. & !adj_uinv
             !         ,",",UPrim_master(2,p,q,WMLESToBCSide(SideID)) &
             !         ,",",UPrim_master(3,p,q,WMLESToBCSide(SideID)) &
+            !         ,",",gradUy_master(2,p,q,WMLESToBCSide(SideID)) &
             !         ,",",HWMInfo(2,p,q,SideID) &
             !         ,",",HWMInfo(3,p,q,SideID) &
             !         ,",",tangvec(1) &
@@ -991,6 +1009,7 @@ SELECT CASE(WallModel)
             !         ,",",inner_prod &
             !         ,",",WMLES_TauW(1,p,q,SideID)&
             !         ,",",WMLES_TauW(2,p,q,SideID)
+            ! END IF
         END DO; END DO
     END DO
 
@@ -1520,7 +1539,15 @@ SDEALLOCATE(HWMLocalInfo)
 SDEALLOCATE(HWMInfo)
 SDEALLOCATE(WMLES_RecvRequests)
 SDEALLOCATE(WMLES_SendRequests)
-
+SDEALLOCATE(WMLESShapeInfo)
+SDEALLOCATE(WMLESToLaminarSide)
+SDEALLOCATE(WMLESToTurbulentSide)
+SDEALLOCATE(FSBeta)
+SDEALLOCATE(FSDelta)
+SDEALLOCATE(FSEtaInf)
+SDEALLOCATE(FSWallShear)
+SDEALLOCATE(FSEta)
+SDEALLOCATE(FSFPrime)
 
 END SUBROUTINE FinalizeWMLES
 
