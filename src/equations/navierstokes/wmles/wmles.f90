@@ -559,7 +559,10 @@ SELECT CASE(WallModel)
                     ! We use the function below to decrease Beta based on the Reynolds number of the flow: 
                     ! Z(t) = 1 / (1 + EXP(-(1/Re_c) * LOG(b) * Re)), where Re_c is the Reynolds where we want the inflection point in the function,
                     ! and b is a constant which also determines such inflection point. We are currently using Sigmoid b = 2 + SQRT(3)
-                    SSig = 1. / (1. + EXP(-(1./50000.) * LOG(2.+SQRT(3.)) *  Re))
+                    ! SSig = 1. / (1. + EXP(-(1./50000.) * LOG(2.+SQRT(3.)) *  Re))
+                    ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
+                    !7) This is (6) slightly modified to take into account x-distance (growth of boundary layer)
+                    SSig = 1. / (1. + EXP(-(1./80000.) * LOG(2. + SQRT(3.) - (5./2.)*Face_xGP(1,p,q,0,WMLESToBCSide(iSide))) *  Re))
                     FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     
                     ! Solve FS once for each point and cache the solution (needed later)
