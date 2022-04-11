@@ -562,8 +562,14 @@ SELECT CASE(WallModel)
                     ! SSig = 1. / (1. + EXP(-(1./50000.) * LOG(2.+SQRT(3.)) *  Re))
                     ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     !7) This is (6) slightly modified to take into account x-distance (growth of boundary layer)
-                    SSig = 1. / (1. + EXP(-(1./80000.) * LOG(2. + SQRT(3.) - (5./2.)*Face_xGP(1,p,q,0,WMLESToBCSide(iSide))) *  Re))
+                    ! SSig = 1. / (1. + EXP(-(1./80000.) * LOG(2. + SQRT(3.) - (5./2.)*Face_xGP(1,p,q,0,WMLESToBCSide(iSide))) *  Re))
+                    ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
+                    !8) This is (7) slightly modified
+                    SSig = (1. - Face_xGP(1,p,q,0,WMLESToBCSide(iSide))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
                     FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
+                    !9) This is (8) slightly modified
+                    ! SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
+                    ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     
                     ! Solve FS once for each point and cache the solution (needed later)
                     CALL FalknerSkan(1.0, FSBeta_tmp(p,q,nWMLaminarSides), etainf, ddfddn, xi, fps)
@@ -924,7 +930,7 @@ SELECT CASE(WallModel)
     END DO ! iSide
 
   CASE (WMLES_FALKNER_SKAN)
-    ! IF (ALMOSTEQUALABSOLUTE(t,1E-1,1E-6)) THEN
+    ! IF (ALMOSTEQUALABSOLUTE(t,1E-2,1E-6)) THEN
     ! INQUIRE(unit=211, opened=fopen)
     ! OPEN(UNIT=211,  &
     !    FILE='FSDebug.csv',      &
@@ -985,8 +991,8 @@ SELECT CASE(WallModel)
                 ! TEST BELOW!! (See last commit)
                 ! WMLES_TauW(1,p,q,SideID) = DOT_PRODUCT(tau_w_vec(1:3),TangVec2(1:3,p,q,0,WMLESToBCSide(SideID)))
                 ! WMLES_TauW(2,p,q,SideID) = 0. ! TEST!!!
-            !END IF
-            ! IF (ALMOSTEQUALABSOLUTE(t,1E-1,1E-6)) THEN
+            ! END IF
+            ! IF (ALMOSTEQUALABSOLUTE(t,1E-2,1E-6)) THEN
             ! WRITE(211,*) SideID &
             !         ,",",WMLESToBCSide(SideID) &
             !         ,",",BC(WMLESToBCSide(SideID))  &
