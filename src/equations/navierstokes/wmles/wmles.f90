@@ -565,11 +565,11 @@ SELECT CASE(WallModel)
                     ! SSig = 1. / (1. + EXP(-(1./80000.) * LOG(2. + SQRT(3.) - (5./2.)*Face_xGP(1,p,q,0,WMLESToBCSide(iSide))) *  Re))
                     ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     !8) This is (7) slightly modified
-                    SSig = (1. - Face_xGP(1,p,q,0,WMLESToBCSide(iSide))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
-                    FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
-                    !9) This is (8) slightly modified
-                    ! SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
+                    ! SSig = (1. - Face_xGP(1,p,q,0,WMLESToBCSide(iSide))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
                     ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
+                    !9) This is (8) slightly modified -- numerator now is in terms of SQRT(x) instead of linear in x
+                    SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
+                    FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     
                     ! Solve FS once for each point and cache the solution (needed later)
                     CALL FalknerSkan(1.0, FSBeta_tmp(p,q,nWMLaminarSides), etainf, ddfddn, xi, fps)
