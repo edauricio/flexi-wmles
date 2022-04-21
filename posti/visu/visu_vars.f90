@@ -141,6 +141,7 @@ INTEGER,ALLOCATABLE                   :: nSidesPerBCNameVisu_FV(:)       !< hold
 REAL,ALLOCATABLE                      :: USurfCalc_DG(:,:,:,:)        !< array on which dependent DG quantities are calculated
 REAL,ALLOCATABLE                      :: USurfCalc_FV(:,:,:,:)        !< array on which dependent FV quantities are calculated
 
+
 REAL(C_DOUBLE),ALLOCATABLE,TARGET     :: USurfVisu_DG(     :,:,:,:,:) !< surf. DG solution written to VTK or send to ParaView
 REAL(C_DOUBLE),ALLOCATABLE,TARGET     :: USurfVisu_FV(     :,:,:,:,:) !< surf. FV solution written to VTK or send to ParaView
 REAL(C_DOUBLE),ALLOCATABLE,TARGET     :: CoordsSurfVisu_DG(:,:,:,:,:) !< coordinates of DG surface solution

@@ -517,7 +517,7 @@ SELECT CASE(WallModel)
         FSEta_tmp = 0
         FSPrime_tmp = 0
        ! OPEN(UNIT=211,  &
-       ! FILE='FSDebug.csv',      &
+       ! FILE='FSDebug_Pre_Beta9.csv',      &
        ! STATUS='UNKNOWN',  &
        ! ACTION='WRITE', &
        ! POSITION='APPEND')
@@ -570,8 +570,9 @@ SELECT CASE(WallModel)
                     !9) This is (8) slightly modified -- numerator now is in terms of SQRT(x) instead of linear in x
                     SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
                     FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
+                    IF (FSBeta_tmp(p,q,nWMLaminarSides) .LE. -0.195) FSBeta_tmp(p,q,nWMLaminarSides) = -0.19
                     
-                    ! Solve FS once for each point and cache the solution (needed later)
+                    ! Solve FS once for each point and cache the solution (needed later)                    
                     CALL FalknerSkan(1.0, FSBeta_tmp(p,q,nWMLaminarSides), etainf, ddfddn, xi, fps)
                     FSAlpha_tmp(p,q,nWMLaminarSides) = ddfddn
                     FSEtaInf_tmp(p,q,nWMLaminarSides) = etainf
@@ -978,6 +979,7 @@ SELECT CASE(WallModel)
             eps=0.
             IF (isLE) eps = 1E-6
             eta_root = SQRT((utang**3) / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps)))
+            !IF (isLE) eta_root = 0.
             tau_w_vec = mu0*FSWallShear(p,q,WMLESToLaminarSide(SideID))*eta_root*tangvec
 
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context

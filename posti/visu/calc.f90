@@ -128,12 +128,15 @@ USE MOD_Globals
 USE MOD_PreProc
 USE MOD_Visu_Vars
 USE MOD_EOS_Posti          ,ONLY: CalcQuantities
-USE MOD_Mesh_Vars          ,ONLY: nBCSides
+USE MOD_Mesh_Vars          ,ONLY: nBCSides,BC,BoundaryType
 USE MOD_Mesh_Vars          ,ONLY: NormVec,TangVec1,TangVec2
 USE MOD_StringTools        ,ONLY: STRICMP
 USE MOD_Interpolation      ,ONLY: GetVandermonde
 USE MOD_Interpolation_Vars ,ONLY: NodeType
 USE MOD_ChangeBasisByDim   ,ONLY: ChangeBasisSurf
+#if WMLES
+USE MOD_WMLES_Vars         ,ONLY: WMLES_Tauw, BCSideToWMLES
+#endif
 IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
@@ -148,6 +151,9 @@ REAL,ALLOCATABLE   :: gradUzFace(:,:,:,:)
 REAL,ALLOCATABLE   :: NormVec_loc(:,:,:,:)
 REAL,ALLOCATABLE   :: TangVec1_loc(:,:,:,:)
 REAL,ALLOCATABLE   :: TangVec2_loc(:,:,:,:)
+#if WMLES
+REAL,ALLOCATABLE   :: WMLESTau(:,:,:,:)
+#endif
 !===================================================================================================================================
 CALL GetVandermonde(PP_N,NodeType,NCalc,NodeType,Vdm_N_NCalc,modal=.FALSE.)
 
@@ -165,6 +171,9 @@ ALLOCATE(gradUzFace(1:PP_nVarPrim,0:NCalc,0:ZDIM(NCalc),nBCSidesVisu_DG))
 ALLOCATE(NormVec_loc (1:3,0:NCalc,0:ZDIM(NCalc),nBCSidesVisu_DG))
 ALLOCATE(TangVec1_loc(1:3,0:NCalc,0:ZDIM(NCalc),nBCSidesVisu_DG))
 ALLOCATE(TangVec2_loc(1:3,0:NCalc,0:ZDIM(NCalc),nBCSidesVisu_DG))
+#if WMLES
+ALLOCATE(WMLESTau(1:2,0:NCalc,0:ZDIM(NCalc),nBCSidesVisu_DG))
+#endif
 
 maskCalc=1
 CALL ProlongToFace_independent(nVarCalc,nBCSidesVisu_DG,nElems_DG,maskCalc,UCalc_DG,USurfCalc_DG &
@@ -181,16 +190,19 @@ IF(TRIM(FileType).EQ.'State')THEN
       CALL ChangeBasisSurf(3,PP_N,NCalc,Vdm_N_NCalc,TangVec1(:,:,0:PP_NZ,0,iSide),TangVec1_loc(:,:,:,iSide2))
       CALL ChangeBasisSurf(3,PP_N,NCalc,Vdm_N_NCalc,TangVec2(:,:,0:PP_NZ,0,iSide),TangVec2_loc(:,:,:,iSide2))
     END IF
+    IF (BoundaryType(BC(iSide),BC_TYPE).EQ.5) THEN ! wall-modeled side
+      CALL ChangeBasisSurf(2,PP_N,NCalc,Vdm_N_NCalc,WMLES_Tauw(:,:,:,BCSideToWMLES(iSide)),WMLESTau(:,:,:,iSide2))
+    END IF
   END DO
   IF(withDGOperator.AND.PARABOLIC.EQ.1)THEN
 #if PARABOLIC
     CALL CalcQuantities(nVarCalc,nValSide,mapAllBCSidesToDGVisuBCSides,mapDepToCalc,USurfCalc_DG,maskCalc*(1-DepVolumeOnly),&
         gradUxFace,gradUyFace,gradUzFace,&
-        NormVec_loc(:,:,:,:),TangVec1_loc(:,:,:,:),TangVec2_loc(:,:,:,:))
+        NormVec_loc(:,:,:,:),TangVec1_loc(:,:,:,:),TangVec2_loc(:,:,:,:),WMLESTau(:,:,:,:))
 #endif
   ELSE
     CALL CalcQuantities(nVarCalc,nValSide,mapAllBCSidesToDGVisuBCSides,mapDepToCalc,USurfCalc_DG,maskCalc*(1-DepVolumeOnly),&
-        NormVec=NormVec_loc(:,:,:,:),TangVec1=TangVec1_loc(:,:,:,:),TangVec2=TangVec2_loc(:,:,:,:))
+        NormVec=NormVec_loc(:,:,:,:),TangVec1=TangVec1_loc(:,:,:,:),TangVec2=TangVec2_loc(:,:,:,:),WMTau=WMLESTau(:,:,:,:))
   END IF
 END IF
 

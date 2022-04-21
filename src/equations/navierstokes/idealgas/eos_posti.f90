@@ -168,7 +168,7 @@ END FUNCTION GetMaskGrad
 !> the routine that does the actual calculation CalcDerivedQuantity is called with the appropriate arguments.
 !==================================================================================================================================
 SUBROUTINE CalcQuantities(nVarCalc,nVal,mapCalcMeshToGlobalMesh,mapDepToCalc,UCalc,maskCalc,gradUx,gradUy,gradUz,&
-    NormVec,TangVec1,TangVec2)
+    NormVec,TangVec1,TangVec2,WMTau)
 ! MODULES
 USE MOD_Globals
 USE MOD_EOS_Posti_Vars
@@ -183,6 +183,7 @@ INTEGER,INTENT(IN)                                              :: maskCalc(nVar
 REAL,INTENT(OUT)                                                :: UCalc(PRODUCT(nVal),1:nVarCalc)
 REAL,DIMENSION(1:PP_nVarPrim,PRODUCT(nVal)),INTENT(IN),OPTIONAL :: gradUx,gradUy,gradUz
 REAL,DIMENSION(1:3,PRODUCT(nVal)),INTENT(IN),OPTIONAL           :: NormVec,TangVec1,TangVec2
+REAL,DIMENSION(1:2,PRODUCT(nVal)),INTENT(IN),OPTIONAL           :: WMTau
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 LOGICAL            :: withGradients
@@ -199,9 +200,9 @@ DO iVar=1,nVarDepEOS
     IF(withGradients)THEN
       IF(withVectors)THEN
         CALL CalcDerivedQuantity(iVarCalc,DepNames(iVar),nVarCalc,nVal,mapCalcMeshToGlobalMesh,mapDepToCalc,UCalc,gradUx,gradUy,gradUz,&
-            NormVec,TangVec1,TangVec2)
+            NormVec,TangVec1,TangVec2,WMTau)
       ELSE
-        CALL CalcDerivedQuantity(iVarCalc,DepNames(iVar),nVarCalc,nVal,mapCalcMeshToGlobalMesh,mapDepToCalc,UCalc,gradUx,gradUy,gradUz)
+        CALL CalcDerivedQuantity(iVarCalc,DepNames(iVar),nVarCalc,nVal,mapCalcMeshToGlobalMesh,mapDepToCalc,UCalc,gradUx,gradUy,gradUz,WMTau=WMTau)
       END IF
     ELSE
       IF(withVectors)THEN
@@ -222,7 +223,7 @@ END SUBROUTINE CalcQuantities
 !> for the more complex ones.
 !==================================================================================================================================
 SUBROUTINE CalcDerivedQuantity(iVarCalc,DepName,nVarCalc,nVal,mapCalcMeshToGlobalMesh,mapDepToCalc,UCalc,gradUx,gradUy,gradUz, &
-    NormVec,TangVec1,TangVec2)
+    NormVec,TangVec1,TangVec2,WMTau)
 ! MODULES
 USE MOD_PreProc
 USE MOD_EOS_Posti_Vars
@@ -240,6 +241,7 @@ INTEGER,INTENT(IN)                                              :: mapDepToCalc(
 REAL,INTENT(INOUT)                                              :: UCalc(PRODUCT(nVal),1:nVarCalc)
 REAL,DIMENSION(1:PP_nVarPrim,PRODUCT(nVal)),INTENT(IN),OPTIONAL :: gradUx,gradUy,gradUz
 REAL,DIMENSION(1:3,PRODUCT(nVal)),INTENT(IN),OPTIONAL           :: NormVec,TangVec1,TangVec2
+REAL,DIMENSION(1:2,PRODUCT(nVal)),INTENT(IN),OPTIONAL           :: WMTau
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 INTEGER            :: i,iMom1,iMom2,iMom3,iDens,iPres,iVel1,iVel2,iVel3,iVelM,iVelS,iEner,iEnst,iTemp
@@ -380,11 +382,11 @@ IF (withVectors) THEN
   SELECT CASE(DepName_low)
 #if PARABOLIC
     CASE("wallfrictionx")
-      UCalc(:,iVarCalc) = FillWallFriction(1,nVal,UCalc(:,iTemp),gradUx,gradUy,gradUz,NormVec)
+      UCalc(:,iVarCalc) = FillWallFriction(1,nVal,UCalc(:,iTemp),gradUx,gradUy,gradUz,NormVec,WMTau)
     CASE("wallfrictiony")
-      UCalc(:,iVarCalc) = FillWallFriction(2,nVal,UCalc(:,iTemp),gradUx,gradUy,gradUz,NormVec)
+      UCalc(:,iVarCalc) = FillWallFriction(2,nVal,UCalc(:,iTemp),gradUx,gradUy,gradUz,NormVec,WMTau)
     CASE("wallfrictionz")
-      UCalc(:,iVarCalc) = FillWallFriction(3,nVal,UCalc(:,iTemp),gradUx,gradUy,gradUz,NormVec)
+      UCalc(:,iVarCalc) = FillWallFriction(3,nVal,UCalc(:,iTemp),gradUx,gradUy,gradUz,NormVec,WMTau)
     CASE("wallfrictionmagnitude")
       UCalc(:,iVarCalc) = SQRT(UCalc(:,iWFriX)**2+UCalc(:,iWFriY)**2+UCalc(:,iWFriZ)**2)
     CASE("wallheattransfer")
@@ -555,18 +557,19 @@ END FUNCTION FillQcriterion
 !==================================================================================================================================
 !> Calculate the wall friction in direction dir.
 !==================================================================================================================================
-FUNCTION FillWallFriction(dir,nVal,Temperature,gradUx,gradUy,gradUz,NormVec) RESULT(WallFriction)
+FUNCTION FillWallFriction(dir,nVal,Temperature,gradUx,gradUy,gradUz,NormVec,WMTau) RESULT(WallFriction)
 ! MODULES
 USE MOD_Eos_Vars
 USE MOD_Viscosity
 IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT / OUTPUT VARIABLES
-INTEGER,INTENT(IN)                                   :: dir,nVal(:)
-REAL,DIMENSION(PRODUCT(nVal)),INTENT(IN)             :: Temperature
-REAL,DIMENSION(PP_nVarPrim,PRODUCT(nVal)),INTENT(IN) :: gradUx,gradUy,gradUz
-REAL,DIMENSION(1:3,PRODUCT(nVal)),INTENT(IN)         :: NormVec
-REAL                                                 :: WallFriction(PRODUCT(nVal))
+INTEGER,INTENT(IN)                                    :: dir,nVal(:)
+REAL,DIMENSION(PRODUCT(nVal)),INTENT(IN)              :: Temperature
+REAL,DIMENSION(PP_nVarPrim,PRODUCT(nVal)),INTENT(IN)  :: gradUx,gradUy,gradUz
+REAL,DIMENSION(1:3,PRODUCT(nVal)),INTENT(IN)          :: NormVec
+REAL,DIMENSION(1:2,PRODUCT(nVal)),INTENT(IN),OPTIONAL :: WMTau
+REAL                                                  :: WallFriction(PRODUCT(nVal))
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 REAL              :: tau(3,3)                  ! Viscous stress tensor
@@ -576,6 +579,19 @@ REAL              :: WallFrictionLoc(3)
 REAL              :: temp
 INTEGER           :: i
 !===================================================================================================================================
+#if WMLES
+IF (PRESENT(WMTau)) THEN
+  IF (dir.EQ.3) THEN
+    WallFriction = 0.
+  ELSE 
+    DO i=1,PRODUCT(nVal) 
+      WallFriction(i) = WMTau(dir,i)
+    END DO
+  END IF
+ELSE
+  WallFriction = 0.
+END IF
+#else
 DO i=1,PRODUCT(nVal)
   temp=Temperature(i)
   mu=VISCOSITY_TEMPERATURE(temp)
@@ -593,6 +609,7 @@ DO i=1,PRODUCT(nVal)
   WallFrictionLoc(1:3)=-1*MATMUL(tau,NormVec(:,i))
   WallFriction(i)=WallFrictionLoc(dir)
 END DO
+#endif
 END FUNCTION FillWallFriction
 
 !==================================================================================================================================
