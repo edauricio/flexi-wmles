@@ -191,7 +191,7 @@ CALL InitTestcase()
 ! Initialize WMLES
 CALL InitWMLES()
 #endif
-
+CALL Abort(__STAMP__, "End of memory test!")
 END SUBROUTINE InitEquation
 
 

@@ -100,7 +100,7 @@ INTEGER, ALLOCATABLE            :: WMLESToBCSide_tmp(:), TauW_Proc_tmp(:,:,:,:)
 REAL, ALLOCATABLE               :: OthersPointInfo(:,:,:) ! indices-- 1-3: hwm_Coords, 4-6: TangVec1, 7: Glob_hwmElemID
 INTEGER                         :: WallStressCount_local(0:nProcessors-1), WallStressCount(0:nProcessors-1)
 INTEGER                         :: FirstElemInd, LastElemInd, FirstSideInd, LastSideInd
-REAL, ALLOCATABLE               :: xi(:), fps(:), FSBeta_tmp(:,:,:), FSDelta_tmp(:,:,:), FSEta_tmp(:,:,:,:), FSPrime_tmp(:,:,:,:), FSAlpha_tmp(:,:,:), FSEtaInf_tmp(:,:,:)
+REAL, ALLOCATABLE               :: xi(:), fps(:), FSBeta_tmp(:,:,:), FSAlpha_tmp(:,:,:)
 REAL                            :: h_wm_Coords(3), DistanceVect(3), Distance, inner_prod, beta_l, etainf, ddfddn
 LOGICAL                         :: FoundhwmElem, FoundhwmPoint
 INTEGER                         :: nPoints_MINE_tmp(2), nPoints_YOUR_tmp(2) ! indices -- 1: my rank, 2: how many points u calculate for me
@@ -434,6 +434,10 @@ DO iGlobalBCSide=1,nBCSides_global
     END IF ! IF ELSE Local BC Side
 END DO
 
+SDEALLOCATE(BCSideToWMLES_global)
+SDEALLOCATE(WMLESShapeInfo_global)
+SDEALLOCATE(WMConnection)
+
 ! In order to reduce memory usage, we re-map the SendToInterp vector, ordering Send Points from the
 ! lowest to the highest MPI rank, sequentially. Therefore, we also need to re-map HWMInterpInfo.
 ALLOCATE(nHWMSendPoints(0:nWMLESSendProcs))
@@ -458,6 +462,10 @@ DO iProc=0, nProcessors-1
         SendToInterpPoint(WMLESSendRange(1,nWMLESSendProcs):WMLESSendRange(2,nWMLESSendProcs)) = SendToInterpPoint_tmp(1:nHWMSendPoints_tmp(iProc), iProc)
     END IF
 END DO
+SDEALLOCATE(HWMSendInfo_tmp)
+SDEALLOCATE(nHWMSendPoints_tmp)
+SDEALLOCATE(SendToInterpPoint_tmp)
+SDEALLOCATE(WMLESSendToProc)
 
 ! The same logic above is done for the receiving buffer, just so that we store the receiving ranges
 ! according to each MPI rank to receive from
@@ -480,6 +488,9 @@ DO iProc=0, nProcessors-1
         HWMRecvInfo(nHWMPropSend+1:nHWMPropSend+4, WMLESRecvRange(1,nWMLESRecvProcs):WMLESRecvRange(2,nWMLESRecvProcs)) = HWMRecvInfo_tmp(1:4, 1:nHWMRecvPoints_tmp(iProc), iProc)
     END IF
 END DO
+SDEALLOCATE(HWMRecvInfo_tmp)
+SDEALLOCATE(nHWMRecvPoints_tmp)
+SDEALLOCATE(WMLESRecvFromProc)
 
 ! Memory bookeeping (allocate the minimum necessary memory, and free the excess from the temp variables)
 ALLOCATE(HWMInterpInfo(4, nHWMInterpPoints))
@@ -494,6 +505,9 @@ DO i=1,nHWMLocalPoints
     LocalToInterpPoint(i) = LocalToInterpPoint_tmp(i)
     HWMLocalInfo(1:4, i) = HWMLocalInfo_tmp(1:4, i)
 END DO
+SDEALLOCATE(HWMInterpInfo_tmp)
+SDEALLOCATE(HWMLocalInfo_tmp)
+SDEALLOCATE(LocalToInterpPoint_tmp)
 
 ! We now calculate the local, point-wise beta's defining the Falkner-Skan equation
 ! profile to be solved for each point in the boundary layer pertaining to the laminar
@@ -504,8 +518,8 @@ END DO
 SELECT CASE(WallModel)
     CASE(WMLES_FSLL,WMLES_FALKNER_SKAN)
         Re = GETREAL("Reynolds")
-        ALLOCATE(FSBeta_tmp(0:PP_N,0:PP_N,nWMLESSides),FSDelta_tmp(0:PP_N,0:PP_N,nWMLESSides))
-        ALLOCATE(FSAlpha_tmp(0:PP_N,0:PP_N,nWMLESSides),FSEtaInf_tmp(0:PP_N,0:PP_N,nWMLESSides))
+        ALLOCATE(FSBeta_tmp(0:PP_N,0:PP_N,nWMLESSides))!,FSDelta_tmp(0:PP_N,0:PP_N,nWMLESSides))
+        ALLOCATE(FSAlpha_tmp(0:PP_N,0:PP_N,nWMLESSides))!,FSEtaInf_tmp(0:PP_N,0:PP_N,nWMLESSides))
         ALLOCATE(WMLESToLaminarSide(nWMLESSides),WMLESToTurbulentSide(nWMLESSides))
         NMax = 0
         nWMLaminarSides = 0
@@ -513,9 +527,9 @@ SELECT CASE(WallModel)
         WMLESToLaminarSide = 0
         WMLESToTurbulentSide = 0
         ! Allocate generous temporary buffer for FS solution at each laminar boundary point
-        ALLOCATE(FSEta_tmp(1000,0:PP_N,0:PP_N,nWMLESSides),FSPrime_tmp(1000,0:PP_N,0:PP_N,nWMLESSides))
-        FSEta_tmp = 0
-        FSPrime_tmp = 0
+        !ALLOCATE(FSEta_tmp(1000,0:PP_N,0:PP_N,nWMLESSides),FSPrime_tmp(1000,0:PP_N,0:PP_N,nWMLESSides))
+        !FSEta_tmp = 0
+        !FSPrime_tmp = 0
        ! OPEN(UNIT=211,  &
        ! FILE='FSDebug_Pre_Beta9.csv',      &
        ! STATUS='UNKNOWN',  &
@@ -575,21 +589,21 @@ SELECT CASE(WallModel)
                     ! Solve FS once for each point and cache the solution (needed later)                    
                     CALL FalknerSkan(1.0, FSBeta_tmp(p,q,nWMLaminarSides), etainf, ddfddn, xi, fps)
                     FSAlpha_tmp(p,q,nWMLaminarSides) = ddfddn
-                    FSEtaInf_tmp(p,q,nWMLaminarSides) = etainf
+                    ! FSEtaInf_tmp(p,q,nWMLaminarSides) = etainf
                     IF (SIZE(xi,1).GT.NMax) NMax = SIZE(xi,1)
                     IF (NMax.GT.1000) CALL Abort(__STAMP__,'Unexpected size for "XI" vector of FalknerSkan solution')
-                    FSEta_tmp(1:SIZE(xi,1),p,q,nWMLaminarSides) = xi(:)
-                    FSPrime_tmp(1:SIZE(fps,1),p,q,nWMLaminarSides) = fps(:)
+                    !FSEta_tmp(1:SIZE(xi,1),p,q,nWMLaminarSides) = xi(:)
+                    !FSPrime_tmp(1:SIZE(fps,1),p,q,nWMLaminarSides) = fps(:)
                     
 
                     ! Look for eta_delta (i.e., eta such that fprime ~ 0.99)
-                    FSDelta_tmp(p,q,nWMLaminarSides) = etainf
-                    DO i=1,SIZE(fps,1)
-                        IF (fps(i)>=0.99) THEN
-                            FSDelta_tmp(p,q,nWMLaminarSides) = xi(i)*etainf
-                            EXIT
-                        END IF
-                    END DO
+                    ! FSDelta_tmp(p,q,nWMLaminarSides) = etainf
+                    ! DO i=1,SIZE(fps,1)
+                    !     IF (fps(i)>=0.99) THEN
+                    !         FSDelta_tmp(p,q,nWMLaminarSides) = xi(i)*etainf
+                    !         EXIT
+                    !     END IF
+                    ! END DO
                     ! IF (BC(WMLESToBCSide(iSide)).EQ.1) THEN
                     !     WRITE(211,*) iSide&
                     !                 ,",",WMLESToBCSide(iSide)&
@@ -623,32 +637,32 @@ SELECT CASE(WallModel)
         END DO
 
         ! Allocate permanent memory and copy data from buffer; free buffer next
-        ALLOCATE(FSBeta(0:PP_N,0:PP_N,nWMLaminarSides),FSDelta(0:PP_N,0:PP_N,nWMLaminarSides))
-        ALLOCATE(FSEtaInf(0:PP_N,0:PP_N,nWMLaminarSides),FSWallShear(0:PP_N,0:PP_N,nWMLaminarSides))
-        ALLOCATE(FSEta(NMax,0:PP_N,0:PP_N,nWMLaminarSides),FSFPrime(NMax,0:PP_N,0:PP_N,nWMLaminarSides))
+        ALLOCATE(FSBeta(0:PP_N,0:PP_N,nWMLaminarSides))!,FSDelta(0:PP_N,0:PP_N,nWMLaminarSides))
+        ALLOCATE(FSWallShear(0:PP_N,0:PP_N,nWMLaminarSides))!,FSEtaInf(0:PP_N,0:PP_N,nWMLaminarSides),)
+        !ALLOCATE(FSEta(NMax,0:PP_N,0:PP_N,nWMLaminarSides),FSFPrime(NMax,0:PP_N,0:PP_N,nWMLaminarSides))
         
 
         DO iSide=1,nWMLaminarSides
             DO p=0,PP_N; DO q=0,PP_N
                 FSBeta(p,q,iSide) = FSBeta_tmp(p,q,iSide)
-                FSDelta(p,q,iSide) = FSDelta_tmp(p,q,iSide)
+                ! FSDelta(p,q,iSide) = FSDelta_tmp(p,q,iSide)
                 FSWallShear(p,q,iSide) = FSAlpha_tmp(p,q,iSide)
-                FSEtaInf(p,q,iSide) = FSEtaInf_tmp(p,q,iSide)
-                DO i=1,NMax
-                    FSEta(i,p,q,iSide) = FSEta_tmp(i,p,q,iSide)
-                    FSFPrime(i,p,q,iSide) = FSPrime_tmp(i,p,q,iSide)
-                END DO
+                ! FSEtaInf(p,q,iSide) = FSEtaInf_tmp(p,q,iSide)
+                ! DO i=1,NMax
+                !     FSEta(i,p,q,iSide) = FSEta_tmp(i,p,q,iSide)
+                !     FSFPrime(i,p,q,iSide) = FSPrime_tmp(i,p,q,iSide)
+                ! END DO
             END DO; END DO
         END DO
         DEALLOCATE(FSBeta_tmp)
-        DEALLOCATE(FSDelta_tmp)
-        DEALLOCATE(FSEta_tmp)
-        DEALLOCATE(FSPrime_tmp)
+        !DEALLOCATE(FSDelta_tmp)
+        !DEALLOCATE(FSEta_tmp)
+        !DEALLOCATE(FSPrime_tmp)
         DEALLOCATE(FSAlpha_tmp)
-        DEALLOCATE(FSEtaInf_tmp)
+        !DEALLOCATE(FSEtaInf_tmp)
 
 END SELECT
-
+SDEALLOCATE(WMLESShapeInfo)
 
 !> =-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=--=-
 !> Logging Information (mainly for debugging purposes)
@@ -692,16 +706,6 @@ DO i=1,nWMLESRecvProcs
 END DO
 IF (LOGGING) CALL FLUSH(UNIT_logOut)
 
-SDEALLOCATE(HWMSendInfo_tmp)
-SDEALLOCATE(HWMRecvInfo_tmp)
-SDEALLOCATE(HWMInterpInfo_tmp)
-SDEALLOCATE(nHWMSendPoints_tmp)
-SDEALLOCATE(nHWMRecvPoints_tmp)
-SDEALLOCATE(HWMLocalInfo_tmp)
-SDEALLOCATE(LocalToInterpPoint_tmp)
-SDEALLOCATE(SendToInterpPoint_tmp)
-SDEALLOCATE(WMLESRecvFromProc)
-SDEALLOCATE(WMLESSendToProc)
 
 ALLOCATE(WMLES_TauW(2, 0:PP_N, 0:PP_NZ, nWMLESSides))
 ALLOCATE(HWMInfo(nHWMPropSend+1, 0:PP_N, 0:PP_NZ, nWMLESSides))
@@ -723,6 +727,7 @@ CALL MPI_BARRIER(MPI_COMM_FLEXI, iError)
 WMLESInitDone=.TRUE.
 SWRITE(UNIT_stdOut,'(A)')' INIT Wall-Modeled LES DONE!'
 SWRITE(UNIT_StdOut,'(132("-"))')
+
 
 END SUBROUTINE InitWMLES
 
@@ -979,7 +984,7 @@ SELECT CASE(WallModel)
             eps=0.
             IF (isLE) eps = 1E-6
             eta_root = SQRT((utang**3) / ((2.-FSBeta(p,q,WMLESToLaminarSide(SideID))) * (mu0/UPrim_master(1,p,q,WMLESToBCSide(SideID))) * (Face_xGP(1,p,q,0,WMLESToBCSide(SideID)) + eps)))
-            !IF (isLE) eta_root = 0.
+            IF (isLE) eta_root = 0.
             tau_w_vec = mu0*FSWallShear(p,q,WMLESToLaminarSide(SideID))*eta_root*tangvec
 
             ! We now project tau_w_vec onto local coordinates, since WMLES_TauW is used in a local context
@@ -1462,13 +1467,13 @@ IF (nWMLESRecvProcs.NE.0) THEN
     DO i=1,WMLESRecvRange(2,nWMLESRecvProcs)
         HWMInfo(1, INT(HWMRecvInfo(nHWMPropSend+2, i)), & ! p
                     INT(HWMRecvInfo(nHWMPropSend+3, i)), & ! q
-                    INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides) & ! iWMLESSide
+                    BCSideToWMLES(INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides)) & ! iWMLESSide
                 = HWMRecvInfo(nHWMPropSend+1, i) ! h_wm value
 
         DO k=1,nHWMPropSend
             HWMInfo(k+1, INT(HWMRecvInfo(nHWMPropSend+2, i)), & ! p
                     INT(HWMRecvInfo(nHWMPropSend+3, i)), & ! q
-                    INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides) & ! iWMLESSide
+                    BCSideToWMLES(INT(HWMRecvInfo(nHWMPropSend+4, i))-offsetBCSides)) & ! iWMLESSide
                 = HWMRecvInfo(k, i) ! flow property corresponding to index k
         END DO
     END DO
@@ -1550,15 +1555,15 @@ SDEALLOCATE(HWMLocalInfo)
 SDEALLOCATE(HWMInfo)
 SDEALLOCATE(WMLES_RecvRequests)
 SDEALLOCATE(WMLES_SendRequests)
-SDEALLOCATE(WMLESShapeInfo)
+
 SDEALLOCATE(WMLESToLaminarSide)
 SDEALLOCATE(WMLESToTurbulentSide)
 SDEALLOCATE(FSBeta)
-SDEALLOCATE(FSDelta)
-SDEALLOCATE(FSEtaInf)
+!SDEALLOCATE(FSDelta)
+!SDEALLOCATE(FSEtaInf)
 SDEALLOCATE(FSWallShear)
-SDEALLOCATE(FSEta)
-SDEALLOCATE(FSFPrime)
+!SDEALLOCATE(FSEta)
+!SDEALLOCATE(FSFPrime)
 
 END SUBROUTINE FinalizeWMLES
 

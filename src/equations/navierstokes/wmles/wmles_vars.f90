@@ -51,15 +51,15 @@ REAL,ALLOCATABLE            :: WMLES_Tauw(:,:,:,:) ! Wall stress tensor.
                                                    ! Second and third indices: indices "i,j" of the BC face
                                                    ! Fourth index: WMLES Side
 REAL,ALLOCATABLE            :: FSBeta(:,:,:)        ! Beta of Falkner-Skan equations for each (p,q,nWMLESSide) of the laminar region
-REAL,ALLOCATABLE            :: FSDelta(:,:,:)       ! Eta value (similarity variable) corresponding to the boundary layer edge, according
+!REAL,ALLOCATABLE            :: FSDelta(:,:,:)       ! Eta value (similarity variable) corresponding to the boundary layer edge, according
                                                     ! to the Falkner-Skan solution, for each point (p,q,nWMLESSide)
-REAL,ALLOCATABLE            :: FSEtaInf(:,:,:)    ! "Free boundary" eta_inf for each point (p,q,nWMLESSide) according to Falkner-Skan solution
+!REAL,ALLOCATABLE            :: FSEtaInf(:,:,:)    ! "Free boundary" eta_inf for each point (p,q,nWMLESSide) according to Falkner-Skan solution
 REAL,ALLOCATABLE            :: FSWallShear(:,:,:)   ! Solution of f'' at eta=0 ( i.e., "FS Wall Shear") from Falkner Skan equation
                                                     ! for each point (p,q,nWMLESSide)
-REAL,ALLOCATABLE            :: FSEta(:,:,:,:)         ! Cached eta's for each step when advancing the Falkner-Skan solution in eta-direcion
+!REAL,ALLOCATABLE            :: FSEta(:,:,:,:)         ! Cached eta's for each step when advancing the Falkner-Skan solution in eta-direcion
                                                       ! using the RK scheme, for each point (p,q,nWMLESSide)
 
-REAL,ALLOCATABLE            :: FSFPrime(:,:,:,:)    ! Cached solution (f') of the Falkner-Skan equation at each "time-step" (steps along the
+!REAL,ALLOCATABLE            :: FSFPrime(:,:,:,:)    ! Cached solution (f') of the Falkner-Skan equation at each "time-step" (steps along the
                                                     ! similarity variable direction), for each point (p,q,nWMLESSide)
 
 INTEGER                     :: nWMLESSides ! Number of WMLES BC Sides                                                   
