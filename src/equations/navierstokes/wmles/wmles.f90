@@ -57,6 +57,7 @@ CALL addStrListEntry('WallModel', 'EquilibriumTBLE', WMLES_EQTBLE)
 CALL addStrListEntry('WallModel', 'Couette', WMLES_COUETTE)
 CALL addStrListEntry('WallModel', 'FalknerSkan', WMLES_FALKNER_SKAN)
 CALL prms%CreateRealOption('Reynolds', "Reynolds number of the simulation -- important for Laminar wall-modeling")
+CALL prms%CreateRealOption('WM_A', "Free parameter A for laminar wall model")
 CALL prms%CreateRealOption('vKarman', "von Karman constant for the log-law model", "0.41")
 CALL prms%CreateRealOption('B', "intercept coefficient for the log-law model", "5.2")
 
@@ -88,7 +89,7 @@ IMPLICIT NONE
 !----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
 CHARACTER(LEN=10)               :: Channel="channel"
-REAL                            :: WMLES_Tol, RealTmp, SSig, Re
+REAL                            :: WMLES_Tol, RealTmp, SSig, Re, WM_A
 INTEGER                         :: SideID, iSide, GlobalWMLESSide, LocSide, MineCnt, nSideIDs, offsetSideID, iGlobalBCSide, NMax
 INTEGER                         :: Loc_hwmElemID, Glob_hwmElemID, OppSideID
 REAL                            :: hwmElem_NodeCoords(3,0:NGeo,0:NGeo,0:NGeo), OppSideNodeCoords(3,4)
@@ -518,6 +519,7 @@ SDEALLOCATE(LocalToInterpPoint_tmp)
 SELECT CASE(WallModel)
     CASE(WMLES_FSLL,WMLES_FALKNER_SKAN)
         Re = GETREAL("Reynolds")
+        WM_A = GETREAL("WM_A")
         ALLOCATE(FSBeta_tmp(0:PP_N,0:PP_N,nWMLESSides))!,FSDelta_tmp(0:PP_N,0:PP_N,nWMLESSides))
         ALLOCATE(FSAlpha_tmp(0:PP_N,0:PP_N,nWMLESSides))!,FSEtaInf_tmp(0:PP_N,0:PP_N,nWMLESSides))
         ALLOCATE(WMLESToLaminarSide(nWMLESSides),WMLESToTurbulentSide(nWMLESSides))
@@ -531,11 +533,11 @@ SELECT CASE(WallModel)
         !FSEta_tmp = 0
         !FSPrime_tmp = 0
        ! OPEN(UNIT=211,  &
-       ! FILE='FSDebug_Pre_Beta9.csv',      &
+       ! FILE='FSDebug_Beta09.csv',      &
        ! STATUS='UNKNOWN',  &
        ! ACTION='WRITE', &
        ! POSITION='APPEND')
-       !  WRITE(211,*) "wmside,bcside,surf,x,p,q,beta,delta_eta,alpha,etainf"
+       !  WRITE(211,*) "wmside,bcside,surf,x,p,q,beta,alpha"
         DO iSide=1,nWMLESSides
             IF (WMLESShapeInfo(1,iSide).EQ.1) THEN ! Laminar region
                 nWMLaminarSides = nWMLaminarSides + 1
@@ -585,7 +587,10 @@ SELECT CASE(WallModel)
                     ! SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
                     ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     !10) This is (9) slightly modified -- we increase the LOG argument such that SSig is greater, making Beta also greater (greater tau_w)
-                    SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(-(1./50000.) * LOG(6. + SQRT(9.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
+                    ! SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(-(1./50000.) * LOG(6. + SQRT(9.)) *  Re)) / (1. + EXP(-(1./50000.) * LOG(2. + SQRT(3.)) *  Re))
+                    ! FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
+                    !11) This is (10) slightly modified -- now the function is written as published, with A the sole parameter and is an input from the user
+                    SSig = (1. - SQRT(Face_xGP(1,p,q,0,WMLESToBCSide(iSide)))*EXP(- WM_A *  Re)) / (1. + EXP(- WM_A *  Re))
                     FSBeta_tmp(p,q,nWMLaminarSides) = beta_l*(2./PI) - ABS(beta_l*(2./PI)) * (1. - SSig)
                     IF (FSBeta_tmp(p,q,nWMLaminarSides) .LE. -0.195) FSBeta_tmp(p,q,nWMLaminarSides) = -0.19
                     
@@ -615,9 +620,7 @@ SELECT CASE(WallModel)
                     !                 ,",",p &
                     !                 ,",",q &
                     !                 ,",",FSBeta_tmp(p,q,iSide) &
-                    !                 ,",",FSDelta_tmp(p,q,iSide) &
-                    !                 ,",",FSAlpha_tmp(p,q,iSide) &
-                    !                 ,",",FSEtaInf_tmp(p,q,iSide)
+                    !                 ,",",FSAlpha_tmp(p,q,iSide)
                     ! ELSE IF (BC(WMLESToBCSide(iSide)).EQ.2) THEN
                     !     WRITE(211,*) iSide&
                     !                 ,",",WMLESToBCSide(iSide)&
@@ -626,9 +629,7 @@ SELECT CASE(WallModel)
                     !                 ,",",p &
                     !                 ,",",q &
                     !                 ,",",FSBeta_tmp(p,q,iSide) &
-                    !                 ,",",FSDelta_tmp(p,q,iSide) &
-                    !                 ,",",FSAlpha_tmp(p,q,iSide) &
-                    !                 ,",",FSEtaInf_tmp(p,q,iSide)
+                    !                 ,",",FSAlpha_tmp(p,q,iSide)
                     ! ELSE 
                     !     WRITE(211,*) "none"
                     ! END IF
